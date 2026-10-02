@@ -1,0 +1,79 @@
+{
+  "entities": {
+    "Course": {
+      "title": "Course",
+      "description": "Academic course entity associated with Curitiba or FATEC campus",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "campus": { "type": "string", "enum": ["curitiba", "fatec"] },
+        "academicArea": { "type": "string", "enum": ["exatas", "saude", "humanas", "negocios"] },
+        "coordinator": { "type": "string" },
+        "director": { "type": "string" },
+        "period": { "type": "string" },
+        "linkedCampus": { "type": "string" },
+        "coverImage": { "type": "string" }
+      },
+      "required": ["id", "name", "campus", "academicArea", "period"]
+    },
+    "Activity": {
+      "title": "Activity",
+      "description": "Academic activity or institutional evidence record",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "date": { "type": "string" },
+        "time": { "type": "string" },
+        "activityType": { "type": "string" },
+        "objective": { "type": "string" },
+        "complementaryText": { "type": "string" },
+        "photos": { "type": "array" },
+        "targetCourseIds": { "type": "array" },
+        "primaryCampus": { "type": "string" },
+        "syncedCampuses": { "type": "array" },
+        "isShared": { "type": "boolean" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "title", "date", "activityType", "objective", "targetCourseIds"]
+    },
+    "Book": {
+      "title": "Book",
+      "description": "Academic evidence book containing slides for a specific course and campus",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "courseId": { "type": "string" },
+        "campus": { "type": "string", "enum": ["curitiba", "fatec"] },
+        "courseName": { "type": "string" },
+        "academicArea": { "type": "string" },
+        "period": { "type": "string" },
+        "title": { "type": "string" },
+        "subtitle": { "type": "string" },
+        "status": { "type": "string" },
+        "coordinator": { "type": "string" },
+        "director": { "type": "string" },
+        "updatedAt": { "type": "string" },
+        "coverImage": { "type": "string" },
+        "slides": { "type": "array" }
+      },
+      "required": ["id", "courseId", "campus", "courseName", "period", "title", "slides"]
+    }
+  },
+  "firestore": {
+    "/courses/{courseId}": {
+      "schema": "Course",
+      "description": "Collection of courses registered on the platform"
+    },
+    "/activities/{activityId}": {
+      "schema": "Activity",
+      "description": "Collection of academic activities and evidence"
+    },
+    "/books/{bookId}": {
+      "schema": "Book",
+      "description": "Collection of academic books and presentations"
+    }
+  }
+}

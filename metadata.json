@@ -1,0 +1,6 @@
+{
+  "name": "Book de Evidências Acadêmicas - Estácio & FATEC",
+  "description": "Sistema universal para criação, edição visual interativa e exportação em PowerPoint (.pptx) de books de evidências acadêmicas e relatórios institucionais para Estácio e FATEC.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
