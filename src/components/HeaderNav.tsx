@@ -82,7 +82,7 @@ export const HeaderNav: React.FC<HeaderNavProps> = ({
         <div className="flex items-center gap-3 shrink-0">
           <div 
             onClick={onGoHome}
-            className="cursor-pointer flex items-center gap-2 hover:opacity-90 transition-opacity"
+            className="cursor-pointer flex items-center gap-2 hover:opacity-90 transition-opacity shrink-0"
             title="Ir para a Página Inicial"
           >
             <EstacioLogo size="md" />

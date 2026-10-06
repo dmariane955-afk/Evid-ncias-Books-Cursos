@@ -3,6 +3,7 @@ import confetti from 'canvas-confetti';
 import { AcademicBook, SlideData, PhotoItem } from '../types';
 import { CAMPUS_CONFIGS, AREA_CONFIGS } from '../data/defaults';
 import { getCourseCoverImage } from './courseCovers';
+import estacioLogoOfficial from '../assets/images/estacio_logo_oficial.png';
 
 /**
  * Converts image URL (local asset, remote URL, or blob) to base64 Data URI
@@ -243,7 +244,7 @@ export async function exportToPowerPoint(book: AcademicBook): Promise<void> {
       slide.background = { color: darkNavy };
 
       // Carregar Logo Oficial e Capa Coerente do Curso com degradê integrado
-      const logoDataUri = await toDataUri('/src/assets/images/estacio_logo_oficial.png');
+      const logoDataUri = (await toDataUri(estacioLogoOfficial)) || (await toDataUri('/estacio_logo_oficial.png'));
       const coverImageUrl = s.photos[0]?.url || book.coverImage || getCourseCoverImage(book.courseName, book.academicArea);
       const capaBgDataUri = await createPptxCapaBackground(coverImageUrl);
 

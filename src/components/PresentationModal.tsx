@@ -162,9 +162,9 @@ export const PresentationModal: React.FC<PresentationModalProps> = ({
               {/* CAMADA 4 & 5: CONTEÚDO, TEXTOS E ELEMENTOS INSTITUCIONAIS */}
               <div className="relative z-20 flex-1 p-8 sm:p-12 flex flex-col justify-between">
                 {/* Cabeçalho */}
-                <div className="flex items-center justify-between border-b border-white/15 pb-4">
-                  <div className="flex items-center gap-4">
-                    <div className="bg-white/95 px-3 py-1.5 rounded-lg shadow-sm flex items-center">
+                <div className="flex items-center justify-between border-b border-white/15 pb-4 gap-4">
+                  <div className="flex items-center gap-4 shrink-0">
+                    <div className="bg-white px-4 py-2 rounded-lg shadow-sm flex items-center shrink-0 min-w-max">
                       <EstacioLogo size="lg" />
                     </div>
                     <div className="border-l border-white/25 pl-3">
