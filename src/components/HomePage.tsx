@@ -458,11 +458,23 @@ export const HomePage: React.FC<HomePageProps> = ({
                         <button
                           onClick={() => onDirectExportPPTX(courseBook)}
                           title="Baixar apresentação PowerPoint (.pptx) deste curso"
-                          className="p-2 text-slate-600 hover:text-[#004B8D] hover:bg-slate-100 border border-slate-200 rounded-lg transition-colors"
+                          className="p-2 text-slate-600 hover:text-[#004B8D] hover:bg-slate-100 border border-slate-200 rounded-lg transition-colors shrink-0"
                         >
                           <Download className="w-4 h-4" />
                         </button>
                       )}
+
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onRequestDeleteCourse(course);
+                        }}
+                        title={`Excluir curso "${course.name}" e seu Book`}
+                        className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 border border-slate-200 hover:border-red-200 rounded-lg transition-colors shrink-0"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
                     </div>
                   </div>
                 </div>

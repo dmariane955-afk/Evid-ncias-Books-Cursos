@@ -7,7 +7,8 @@ import {
   RotateCcw, 
   Building2, 
   ShieldCheck,
-  FileJson
+  FileJson,
+  Trash2
 } from 'lucide-react';
 import { AcademicBook } from '../types';
 import { CAMPUS_CONFIGS } from '../data/defaults';
@@ -19,6 +20,7 @@ interface BookSettingsModalProps {
   onUpdateBook: (updated: Partial<AcademicBook>) => void;
   onResetBook: () => void;
   onLoadBook: (newBook: AcademicBook) => void;
+  onRequestDeleteBook?: () => void;
 }
 
 export const BookSettingsModal: React.FC<BookSettingsModalProps> = ({
@@ -28,6 +30,7 @@ export const BookSettingsModal: React.FC<BookSettingsModalProps> = ({
   onUpdateBook,
   onResetBook,
   onLoadBook,
+  onRequestDeleteBook,
 }) => {
   const jsonFileInputRef = useRef<HTMLInputElement>(null);
 
@@ -206,6 +209,31 @@ export const BookSettingsModal: React.FC<BookSettingsModalProps> = ({
               <span>Restaurar Padrão</span>
             </button>
           </div>
+
+          {/* Danger zone / Excluir Book */}
+          {onRequestDeleteBook && (
+            <div className="pt-3 border-t border-red-200 bg-red-50/50 p-3 rounded-lg flex items-center justify-between">
+              <div>
+                <span className="font-bold text-red-700 block">
+                  Excluir este Book Permanentemente
+                </span>
+                <span className="text-[11px] text-slate-500">
+                  Remove este Book da plataforma e do banco de dados na nuvem.
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  onClose();
+                  onRequestDeleteBook();
+                }}
+                className="px-3 py-1.5 rounded-lg bg-red-600 hover:bg-red-700 text-white font-semibold flex items-center gap-1 transition-colors shadow-2xs"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>Excluir Book</span>
+              </button>
+            </div>
+          )}
         </div>
 
         {/* Footer */}

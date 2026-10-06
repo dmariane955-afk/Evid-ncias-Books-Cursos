@@ -99,7 +99,7 @@ export function initFirestoreSync(
         if (snapshot.empty && !initialCoursesReceived && initialDefaults.courses.length > 0) {
           // Seed initial courses
           await seedInitialCourses(initialDefaults.courses);
-        } else if (!snapshot.empty) {
+        } else {
           const list: Course[] = [];
           snapshot.forEach((docSnap) => {
             list.push(docSnap.data() as Course);
@@ -129,7 +129,7 @@ export function initFirestoreSync(
         if (snapshot.empty && !initialActivitiesReceived && initialDefaults.activities.length > 0) {
           // Seed initial activities
           await seedInitialActivities(initialDefaults.activities);
-        } else if (!snapshot.empty) {
+        } else {
           const list: ActivityItem[] = [];
           snapshot.forEach((docSnap) => {
             list.push(docSnap.data() as ActivityItem);
@@ -158,7 +158,7 @@ export function initFirestoreSync(
         if (snapshot.empty && !initialBooksReceived && initialDefaults.books.length > 0) {
           // Seed initial books
           await seedInitialBooks(initialDefaults.books);
-        } else if (!snapshot.empty) {
+        } else {
           const list: AcademicBook[] = [];
           snapshot.forEach((docSnap) => {
             list.push(docSnap.data() as AcademicBook);

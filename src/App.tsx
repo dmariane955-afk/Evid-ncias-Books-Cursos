@@ -526,29 +526,42 @@ export default function App() {
   const handleRequestDeleteCourse = (course: Course) => {
     setDeleteConfirmState({
       isOpen: true,
-      title: 'Excluir curso?',
+      title: 'Excluir curso e respectivo Book?',
       itemName: `${course.name} (${course.campus === 'curitiba' ? 'Curitiba' : 'FATEC'})`,
-      description: 'Esta ação removerá o curso da lista. Verifique se existem Books ou conteúdos vinculados antes de confirmar.',
-      warningNote: 'O Book e as atividades exclusivas deste curso serão removidos. Conteúdos compartilhados com outros cursos permanecerão intactos.',
+      description: 'Esta ação removerá o curso e seu Book permanentemente da plataforma e do banco de dados na nuvem.',
+      warningNote: 'A exclusão é sincronizada em tempo real para todos os usuários com o link.',
       onConfirm: () => {
         pushHistorySnapshot();
-        // Remove course
+        // Remove course locally and in Firestore
         const remainingCourses = courses.filter((c) => c.id !== course.id);
         setCourses(remainingCourses);
         deleteCourseFromFirestore(course.id);
 
-        // Remove course book
+        // Remove course books locally and in Firestore
+        const booksToDelete = books.filter((b) => b.courseId === course.id);
+        booksToDelete.forEach((b) => deleteBookFromFirestore(b.id));
+        deleteBookFromFirestore(`book-${course.id}`); // Guarantee default ID as well
+
         const remainingBooks = books.filter((b) => b.courseId !== course.id);
         setBooks(remainingBooks);
-        deleteBookFromFirestore(`book-${course.id}`);
 
-        // Remove from activities
+        // Remove from activities and sync with Firestore
         setActivities((prevActs) =>
           prevActs
-            .map((act) => ({
-              ...act,
-              targetCourseIds: act.targetCourseIds.filter((cId) => cId !== course.id),
-            }))
+            .map((act) => {
+              const remainingTargets = act.targetCourseIds.filter((cId) => cId !== course.id);
+              const updatedAct = {
+                ...act,
+                targetCourseIds: remainingTargets,
+                isShared: remainingTargets.length > 1,
+              };
+              if (remainingTargets.length === 0) {
+                deleteActivityFromFirestore(act.id);
+              } else {
+                saveActivityToFirestore(updatedAct);
+              }
+              return updatedAct;
+            })
             .filter((act) => act.targetCourseIds.length > 0)
         );
 
@@ -1215,6 +1228,7 @@ export default function App() {
           pushHistorySnapshot();
           setBooks((prev) => prev.map((b) => (b.id === newBook.id ? newBook : b)));
         }}
+        onRequestDeleteBook={() => handleRequestDeleteBook(currentBook)}
       />
 
       {/* MODAL: FULLSCREEN 16:9 PRESENTATION */}

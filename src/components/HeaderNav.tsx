@@ -274,6 +274,17 @@ export const HeaderNav: React.FC<HeaderNavProps> = ({
           >
             <Settings2 className="w-4 h-4" />
           </button>
+
+          {/* Delete Book button */}
+          {currentView === 'editor' && onRequestDeleteBook && (
+            <button
+              onClick={onRequestDeleteBook}
+              title={`Excluir este Book (${book.courseName})`}
+              className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+            >
+              <Trash2 className="w-4 h-4" />
+            </button>
+          )}
         </div>
       </div>
     </header>
