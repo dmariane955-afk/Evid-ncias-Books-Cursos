@@ -17,6 +17,17 @@ import { Course, AcademicBook, ActivityItem, SlideData, CampusId, AcademicArea }
 import { INITIAL_COURSES, INITIAL_ACTIVITIES, createInitialBooks, COURSES_BY_AREA } from './data/defaults';
 import { exportToPowerPoint } from './utils/pptxExport';
 import { getCourseCoverImage } from './utils/courseCovers';
+import { 
+  initFirestoreSync, 
+  saveBookToFirestore, 
+  saveCourseToFirestore, 
+  saveActivityToFirestore, 
+  deleteBookFromFirestore, 
+  deleteCourseFromFirestore, 
+  deleteActivityFromFirestore,
+  SyncStatus 
+} from './services/firestoreSync';
+import { Share2 } from 'lucide-react';
 
 const STORAGE_COURSES_KEY = 'estacio_academic_courses_v5';
 const STORAGE_ACTIVITIES_KEY = 'estacio_academic_activities_v5';
@@ -103,6 +114,14 @@ export default function App() {
   });
   const [activeSlideId, setActiveSlideId] = useState<string>('');
   const [isExporting, setIsExporting] = useState(false);
+
+  // Firestore Database Real-time Synchronization State
+  const [syncStatus, setSyncStatus] = useState<SyncStatus>('connecting');
+  const [syncMessage, setSyncMessage] = useState<string>('Conectando ao banco de dados...');
+  const [shareToast, setShareToast] = useState<string | null>(null);
+
+  const isInitialSyncDone = useRef(false);
+  const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   // Modals state
   const [isActivityModalOpen, setIsActivityModalOpen] = useState(false);
@@ -248,7 +267,7 @@ export default function App() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [handleUndo, handleRedo]);
 
-  // 3. Persist to localStorage
+  // 3. Persist to localStorage (Local fallback cache)
   useEffect(() => {
     try {
       localStorage.setItem(STORAGE_COURSES_KEY, JSON.stringify(courses));
@@ -258,6 +277,44 @@ export default function App() {
       console.warn('LocalStorage error:', e);
     }
   }, [courses, activities, books]);
+
+  // 4. Real-time Cloud Database Synchronization (Firestore)
+  // All modifications made by anyone with the link reflect in real-time
+  useEffect(() => {
+    const unsub = initFirestoreSync(
+      {
+        onCoursesLoaded: (loadedCourses) => {
+          if (loadedCourses && loadedCourses.length > 0) {
+            setCourses(loadedCourses);
+          }
+        },
+        onActivitiesLoaded: (loadedActivities) => {
+          if (loadedActivities && loadedActivities.length > 0) {
+            setActivities(loadedActivities);
+          }
+        },
+        onBooksLoaded: (loadedBooks) => {
+          if (loadedBooks && loadedBooks.length > 0) {
+            setBooks(loadedBooks);
+          }
+        },
+        onStatusChange: (status, message) => {
+          setSyncStatus(status);
+          if (message) setSyncMessage(message);
+          if (status === 'connected') {
+            isInitialSyncDone.current = true;
+          }
+        },
+      },
+      {
+        courses: INITIAL_COURSES,
+        activities: INITIAL_ACTIVITIES,
+        books: createInitialBooks(INITIAL_COURSES, INITIAL_ACTIVITIES),
+      }
+    );
+
+    return () => unsub();
+  }, []);
 
   // Current Campus Courses & Books
   const campusCourses = courses.filter((c) => c.campus === currentCampus);
@@ -282,6 +339,36 @@ export default function App() {
       setActiveSlideId(currentBook.slides[0]?.id || '');
     }
   }, [currentBook, activeSlideId]);
+
+  // Autosave active book to Firestore when modified (debounced 400ms)
+  useEffect(() => {
+    if (!isInitialSyncDone.current || !currentBook) return;
+    setSyncStatus('syncing');
+    setSyncMessage('Salvando alterações no banco de dados...');
+
+    if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+    saveTimeoutRef.current = setTimeout(async () => {
+      await saveBookToFirestore(currentBook);
+      setSyncStatus('connected');
+      setSyncMessage('Sincronizado na nuvem (Tempo Real)');
+    }, 450);
+
+    return () => {
+      if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+    };
+  }, [currentBook]);
+
+  // Handle Share Link for Real-time Collaboration
+  const handleShareLink = () => {
+    try {
+      navigator.clipboard.writeText(window.location.href);
+      setShareToast('Link copiado! Qualquer pessoa com este link acessará as alterações salvas no banco de dados.');
+      setTimeout(() => setShareToast(null), 4000);
+    } catch {
+      setShareToast('Copie o endereço da barra de navegação para compartilhar.');
+      setTimeout(() => setShareToast(null), 4000);
+    }
+  };
 
   // Update a book's properties
   const handleUpdateBook = (updated: Partial<AcademicBook>) => {
@@ -395,6 +482,7 @@ export default function App() {
 
     setEditingActivity(null);
     setDroppedImageForNewActivity(null);
+    saveActivityToFirestore(activity);
   };
 
   // 5. EXCLUSÃO REAL DE BOOKS (REQUISITO 1 & 2)
@@ -410,6 +498,7 @@ export default function App() {
         // Remove book
         const remainingBooks = books.filter((b) => b.id !== book.id);
         setBooks(remainingBooks);
+        deleteBookFromFirestore(book.id);
 
         // Update activities: remove this courseId from targetCourseIds
         setActivities((prevActs) =>
@@ -446,10 +535,12 @@ export default function App() {
         // Remove course
         const remainingCourses = courses.filter((c) => c.id !== course.id);
         setCourses(remainingCourses);
+        deleteCourseFromFirestore(course.id);
 
         // Remove course book
         const remainingBooks = books.filter((b) => b.courseId !== course.id);
         setBooks(remainingBooks);
+        deleteBookFromFirestore(`book-${course.id}`);
 
         // Remove from activities
         setActivities((prevActs) =>
@@ -536,6 +627,7 @@ export default function App() {
         onConfirm: () => {
           pushHistorySnapshot();
           setActivities((prev) => prev.filter((a) => a.id !== activity.id));
+          deleteActivityFromFirestore(activity.id);
           setBooks((prev) =>
             prev.map((b) => ({
               ...b,
@@ -803,22 +895,30 @@ export default function App() {
 
       updatedCourses.push(counterpartCourse);
       updatedBooks.push(counterpartBook);
+      saveCourseToFirestore(counterpartCourse);
+      saveBookToFirestore(counterpartBook);
     }
 
     setCourses(updatedCourses);
     setBooks(updatedBooks);
     setCurrentCampus(campus);
     setCurrentCourseId(courseId);
+
+    saveCourseToFirestore(newCourse);
+    saveBookToFirestore(newBook);
   };
 
   // 11. ATUALIZAÇÃO DA CAPA DO CURSO E DO RESPECTIVO BOOK
   const handleUpdateCourseCover = (courseId: string, newCoverUrl: string) => {
     pushHistorySnapshot();
-    setCourses((prevCourses) =>
-      prevCourses.map((c) => (c.id === courseId ? { ...c, coverImage: newCoverUrl } : c))
-    );
-    setBooks((prevBooks) =>
-      prevBooks.map((b) => {
+    setCourses((prevCourses) => {
+      const updated = prevCourses.map((c) => (c.id === courseId ? { ...c, coverImage: newCoverUrl } : c));
+      const targetC = updated.find((c) => c.id === courseId);
+      if (targetC) saveCourseToFirestore(targetC);
+      return updated;
+    });
+    setBooks((prevBooks) => {
+      const updated = prevBooks.map((b) => {
         if (b.courseId === courseId) {
           const updatedSlides = b.slides.map((s) => {
             if (s.type === 'capa') {
@@ -836,16 +936,19 @@ export default function App() {
             }
             return s;
           });
-          return {
+          const updatedB = {
             ...b,
             coverImage: newCoverUrl,
             updatedAt: new Date().toISOString(),
             slides: updatedSlides,
           };
+          saveBookToFirestore(updatedB);
+          return updatedB;
         }
         return b;
-      })
-    );
+      });
+      return updated;
+    });
   };
 
   // Reorder slides in current book
@@ -990,6 +1093,9 @@ export default function App() {
         onUndo={handleUndo}
         onRedo={handleRedo}
         onRequestDeleteBook={() => handleRequestDeleteBook(currentBook)}
+        syncStatus={syncStatus}
+        syncMessage={syncMessage}
+        onShareLink={handleShareLink}
       />
 
       {/* VIEW: HOME / DASHBOARD (100% INDIVIDUALIZADO POR POLO) */}
@@ -1153,6 +1259,13 @@ export default function App() {
         initialSelectedCourseIds={syncModalState.initialSelectedCourseIds}
         onConfirmSync={syncModalState.onConfirmSync}
       />
+      {/* Toast de Notificação de Compartilhamento / Nuvem */}
+      {shareToast && (
+        <div className="fixed bottom-6 right-6 z-50 bg-[#001D3D] text-white px-4 py-3 rounded-xl shadow-2xl border border-[#00A3E0] flex items-center gap-2.5 text-xs animate-in fade-in slide-in-from-bottom-3 duration-200">
+          <Share2 className="w-4 h-4 text-[#00A3E0] shrink-0" />
+          <span>{shareToast}</span>
+        </div>
+      )}
     </div>
   );
 }

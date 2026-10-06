@@ -32,6 +32,82 @@ async function toDataUri(url: string): Promise<string | null> {
 }
 
 /**
+ * Creates the official cover composite background (Solid navy blue on the left transitioning
+ * via progressive transparency degradê into the right-side course photograph).
+ */
+async function createPptxCapaBackground(coverImageUrl?: string): Promise<string | null> {
+  if (!coverImageUrl) return null;
+  return new Promise((resolve) => {
+    try {
+      const canvas = document.createElement('canvas');
+      canvas.width = 1920;
+      canvas.height = 1080;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return resolve(null);
+
+      // Base solid navy background
+      ctx.fillStyle = '#001D3D';
+      ctx.fillRect(0, 0, 1920, 1080);
+
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.onload = () => {
+        // Draw right-aligned course photograph occupying ~65% of width
+        const imgX = 1920 * 0.35;
+        const imgW = 1920 * 0.65;
+        const imgH = 1080;
+
+        const imgAspect = img.width / img.height;
+        const targetAspect = imgW / imgH;
+        let sWidth = img.width;
+        let sHeight = img.height;
+        let sx = 0;
+        let sy = 0;
+
+        if (imgAspect > targetAspect) {
+          sWidth = img.height * targetAspect;
+          sx = (img.width - sWidth) / 2;
+        } else {
+          sHeight = img.width / targetAspect;
+          sy = (img.height - sHeight) / 2;
+        }
+
+        ctx.drawImage(img, sx, sy, sWidth, sHeight, imgX, 0, imgW, imgH);
+
+        // Smooth progressive horizontal gradient from solid #001D3D to transparent
+        const hGrad = ctx.createLinearGradient(0, 0, 1920, 0);
+        hGrad.addColorStop(0, '#001D3D');
+        hGrad.addColorStop(0.38, '#001D3D');
+        hGrad.addColorStop(0.48, 'rgba(0, 29, 61, 0.95)');
+        hGrad.addColorStop(0.60, 'rgba(0, 29, 61, 0.72)');
+        hGrad.addColorStop(0.78, 'rgba(0, 29, 61, 0.35)');
+        hGrad.addColorStop(0.90, 'rgba(0, 29, 61, 0.12)');
+        hGrad.addColorStop(1.0, 'rgba(0, 29, 61, 0.05)');
+
+        ctx.fillStyle = hGrad;
+        ctx.fillRect(0, 0, 1920, 1080);
+
+        // Smooth subtle vertical vignette for header/footer contrast
+        const vGrad = ctx.createLinearGradient(0, 0, 0, 1080);
+        vGrad.addColorStop(0, 'rgba(0, 29, 61, 0.65)');
+        vGrad.addColorStop(0.25, 'rgba(0, 29, 61, 0)');
+        vGrad.addColorStop(0.70, 'rgba(0, 29, 61, 0)');
+        vGrad.addColorStop(1.0, 'rgba(0, 29, 61, 0.88)');
+
+        ctx.fillStyle = vGrad;
+        ctx.fillRect(0, 0, 1920, 1080);
+
+        resolve(canvas.toDataURL('image/png'));
+      };
+      img.onerror = () => resolve(null);
+      img.src = coverImageUrl;
+    } catch {
+      resolve(null);
+    }
+  });
+}
+
+/**
  * Triggers visual celebration confetti upon successful PPTX download
  */
 export function fireCelebration() {
@@ -65,7 +141,14 @@ export async function exportToPowerPoint(book: AcademicBook): Promise<void> {
   const bgLight = 'F8FAFC';
 
   // Helper to add institutional header & footer to standard slides
-  const addInstitutionalChrome = (slide: pptxgen.Slide, slideIndex: number, totalSlides: number, categoryTag?: string, titleText?: string) => {
+  const addInstitutionalChrome = (
+    slide: pptxgen.Slide,
+    slideIndex: number,
+    totalSlides: number,
+    categoryTag?: string,
+    titleText?: string,
+    slideData?: SlideData
+  ) => {
     // Top cyan bar (h-1.5 equivalent)
     slide.addShape(pres.ShapeType.rect, {
       x: 0,
@@ -121,8 +204,11 @@ export async function exportToPowerPoint(book: AcademicBook): Promise<void> {
       line: { color: 'E2E8F0', width: 1 },
     });
 
-    // Footer Left: Campus + Period
-    slide.addText(`${campus.fullName} · Período ${book.period}`, {
+    const leftText = slideData?.footerLeftText || `${campus.fullName} · ${book.courseName} · Período ${book.period}`;
+    const rightText = slideData?.footerRightText || `Slide ${slideIndex} de ${totalSlides}`;
+
+    // Footer Left: Campus + Period / Custom text
+    slide.addText(leftText, {
       x: 0.8,
       y: 5.22,
       w: 6.0,
@@ -132,8 +218,8 @@ export async function exportToPowerPoint(book: AcademicBook): Promise<void> {
       fontFace: 'Arial',
     });
 
-    // Footer Right: Slide Number
-    slide.addText(`Slide ${slideIndex} de ${totalSlides}`, {
+    // Footer Right: Slide Number / Custom annotation
+    slide.addText(rightText, {
       x: 7.0,
       y: 5.22,
       w: 2.2,
@@ -152,14 +238,25 @@ export async function exportToPowerPoint(book: AcademicBook): Promise<void> {
     const slideNumber = i + 1;
 
     if (s.type === 'capa') {
-      // SLIDE 01 - CAPA DO BOOK (LOGO OFICIAL ESTÁCIO & IMAGEM COERENTE DO CURSO)
+      // SLIDE 01 - CAPA DO BOOK (NOVO DESIGN: AZUL COM DEGRADÊ E IMAGEM INTEGRADA)
       const slide = pres.addSlide();
       slide.background = { color: darkNavy };
 
-      // Carregar Logo Oficial e Capa Coerente do Curso
+      // Carregar Logo Oficial e Capa Coerente do Curso com degradê integrado
       const logoDataUri = await toDataUri('/src/assets/images/estacio_logo_oficial.png');
       const coverImageUrl = s.photos[0]?.url || book.coverImage || getCourseCoverImage(book.courseName, book.academicArea);
-      const coverDataUri = await toDataUri(coverImageUrl);
+      const capaBgDataUri = await createPptxCapaBackground(coverImageUrl);
+
+      // CAMADAS 1, 2 e 3: Imagem representativa integrada no lado direito via degradê com transparência progressiva
+      if (capaBgDataUri) {
+        slide.addImage({
+          data: capaBgDataUri,
+          x: 0,
+          y: 0,
+          w: 10,
+          h: 5.625,
+        });
+      }
 
       // Top cyan accent line
       slide.addShape(pres.ShapeType.rect, {
@@ -192,10 +289,10 @@ export async function exportToPowerPoint(book: AcademicBook): Promise<void> {
       }
 
       // Campus identification
-      slide.addText(campus.fullName.toUpperCase(), {
+      slide.addText((s.customText1 || campus.fullName).toUpperCase(), {
         x: 3.1,
         y: 0.42,
-        w: 6.1,
+        w: 4.8,
         h: 0.3,
         fontSize: 10,
         bold: true,
@@ -205,10 +302,32 @@ export async function exportToPowerPoint(book: AcademicBook): Promise<void> {
       slide.addText(`${campus.badge} · ${campus.city}`, {
         x: 3.1,
         y: 0.7,
-        w: 6.1,
+        w: 4.8,
         h: 0.25,
         fontSize: 8.5,
         color: '94A3B8',
+        fontFace: 'Arial',
+      });
+
+      // Period badge in top right
+      slide.addShape(pres.ShapeType.rect, {
+        x: 8.0,
+        y: 0.42,
+        w: 1.2,
+        h: 0.4,
+        fill: { color: '003264' },
+        line: { color: cyanAccent, width: 1 },
+        rectRadius: 0.04,
+      });
+      slide.addText(`CICLO ${s.date || book.period}`, {
+        x: 8.0,
+        y: 0.46,
+        w: 1.2,
+        h: 0.3,
+        fontSize: 8,
+        bold: true,
+        align: 'center',
+        color: 'FFFFFF',
         fontFace: 'Arial',
       });
 
@@ -227,7 +346,7 @@ export async function exportToPowerPoint(book: AcademicBook): Promise<void> {
       slide.addText(`CURSO DE GRADUAÇÃO · ${area.label.toUpperCase()}`, {
         x: 1.05,
         y: 1.3,
-        w: 4.5,
+        w: 5.5,
         h: 0.25,
         fontSize: 8.5,
         bold: true,
@@ -236,10 +355,10 @@ export async function exportToPowerPoint(book: AcademicBook): Promise<void> {
       });
 
       // Course Name
-      slide.addText(book.courseName, {
+      slide.addText(s.customText1 || book.courseName, {
         x: 1.05,
         y: 1.55,
-        w: 4.5,
+        w: 5.5,
         h: 0.65,
         fontSize: 22,
         bold: true,
@@ -251,7 +370,7 @@ export async function exportToPowerPoint(book: AcademicBook): Promise<void> {
       slide.addText(s.title || 'Book de Evidências Acadêmicas', {
         x: 1.05,
         y: 2.25,
-        w: 4.5,
+        w: 5.5,
         h: 0.45,
         fontSize: 15,
         bold: true,
@@ -263,7 +382,7 @@ export async function exportToPowerPoint(book: AcademicBook): Promise<void> {
       slide.addText(s.subtitle || 'Registro Institucional de Atividades e Práticas Desenvolvidas', {
         x: 1.05,
         y: 2.72,
-        w: 4.5,
+        w: 5.5,
         h: 0.45,
         fontSize: 10,
         color: '94A3B8',
@@ -280,7 +399,7 @@ export async function exportToPowerPoint(book: AcademicBook): Promise<void> {
         line: { color: '00A3E0', width: 1 },
         rectRadius: 0.04,
       });
-      slide.addText(`PERÍODO LETIVO: ${book.period}`, {
+      slide.addText(`PERÍODO LETIVO: ${s.date || book.period}`, {
         x: 1.15,
         y: 3.37,
         w: 2.6,
@@ -290,27 +409,6 @@ export async function exportToPowerPoint(book: AcademicBook): Promise<void> {
         color: 'FFFFFF',
         fontFace: 'Arial',
       });
-
-      // Right Column: Capa Visual Personalizada do Curso
-      if (coverDataUri) {
-        slide.addShape(pres.ShapeType.rect, {
-          x: 5.75,
-          y: 1.35,
-          w: 3.45,
-          h: 2.5,
-          fill: { color: '003264' },
-          line: { color: cyanAccent, width: 2 },
-          rectRadius: 0.08,
-        });
-        slide.addImage({
-          data: coverDataUri,
-          x: 5.8,
-          y: 1.4,
-          w: 3.35,
-          h: 2.4,
-          sizing: { type: 'cover', w: 3.35, h: 2.4 },
-        });
-      }
 
       // Technical Team / Ficha Técnica (Divider line)
       slide.addShape(pres.ShapeType.line, {
@@ -332,8 +430,13 @@ export async function exportToPowerPoint(book: AcademicBook): Promise<void> {
         fontFace: 'Arial',
       });
 
+      const dirText = s.footerCustomText || book.director || campus.directorDefault || 'Campus Curitiba';
+      const coordText = s.customText2 || book.coordinator || 'Coordenação de Curso';
+      const courseText = s.customText1 || book.courseName;
+      const periodText = s.date || book.period;
+
       slide.addText(
-        `Direção: ${book.director || campus.directorDefault || 'Campus Curitiba'}   |   Coordenação: ${book.coordinator || '(Cadastrado no Sistema)'}   |   Polo: ${campus.fullName}`,
+        `Curso: ${courseText}   |   Período: ${periodText}   |   Coordenação: ${coordText}   |   Unidade: ${dirText}`,
         {
           x: 0.8,
           y: 4.5,
@@ -348,7 +451,7 @@ export async function exportToPowerPoint(book: AcademicBook): Promise<void> {
       // SLIDE 02 - SUMÁRIO EXECUTIVO
       const slide = pres.addSlide();
       slide.background = { color: 'FFFFFF' };
-      addInstitutionalChrome(slide, slideNumber, totalSlides, 'SUMÁRIO EXECUTIVO', s.title);
+      addInstitutionalChrome(slide, slideNumber, totalSlides, 'SUMÁRIO EXECUTIVO', s.title, s);
 
       // Intro text
       slide.addText('Estrutura de apresentação e índice analítico do período acadêmico:', {
@@ -455,7 +558,7 @@ export async function exportToPowerPoint(book: AcademicBook): Promise<void> {
       // SLIDE 03 - APRESENTAÇÃO DO CURSO & PROPÓSITO PEDAGÓGICO
       const slide = pres.addSlide();
       slide.background = { color: 'FFFFFF' };
-      addInstitutionalChrome(slide, slideNumber, totalSlides, 'DIRETRIZES PEDAGÓGICAS', s.title);
+      addInstitutionalChrome(slide, slideNumber, totalSlides, 'DIRETRIZES PEDAGÓGICAS', s.title, s);
 
       // Card 1: Visão Geral e Estruturação Curricular
       slide.addShape(pres.ShapeType.rect, {
@@ -544,7 +647,7 @@ export async function exportToPowerPoint(book: AcademicBook): Promise<void> {
       // SLIDE 04 - ALINHAMENTO COM DIRETRIZES CURRICULARES & MEC
       const slide = pres.addSlide();
       slide.background = { color: 'FFFFFF' };
-      addInstitutionalChrome(slide, slideNumber, totalSlides, 'CONFORMIDADE REGULATÓRIA MEC', s.title);
+      addInstitutionalChrome(slide, slideNumber, totalSlides, 'CONFORMIDADE REGULATÓRIA MEC', s.title, s);
 
       const compList = s.competencies || [];
       compList.forEach((comp, idx) => {
@@ -708,7 +811,7 @@ export async function exportToPowerPoint(book: AcademicBook): Promise<void> {
         actionsReport: 'Registro das ações pedagógicas desenvolvidas.',
       };
 
-      addInstitutionalChrome(slide, slideNumber, totalSlides, meta.category, s.title);
+      addInstitutionalChrome(slide, slideNumber, totalSlides, meta.category, s.title, s);
 
       // Metadata summary strip
       slide.addShape(pres.ShapeType.rect, {
@@ -956,7 +1059,7 @@ export async function exportToPowerPoint(book: AcademicBook): Promise<void> {
       // SLIDE METRICAS & RESULTADOS
       const slide = pres.addSlide();
       slide.background = { color: 'FFFFFF' };
-      addInstitutionalChrome(slide, slideNumber, totalSlides, 'INDICADORES ACADÊMICOS', s.title);
+      addInstitutionalChrome(slide, slideNumber, totalSlides, 'INDICADORES ACADÊMICOS', s.title, s);
 
       const metrics = s.metrics || [];
       const itemW = 1.95;

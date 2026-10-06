@@ -9,11 +9,14 @@ import {
   Plus, 
   Settings2,
   Trash2,
-  ArrowLeftRight
+  ArrowLeftRight,
+  Share2,
+  Cloud
 } from 'lucide-react';
 import { AcademicBook, CampusId, Course } from '../types';
 import { CAMPUS_CONFIGS } from '../data/defaults';
 import { EstacioLogo } from './EstacioLogo';
+import { SyncStatus } from '../services/firestoreSync';
 
 interface HeaderNavProps {
   book: AcademicBook;
@@ -36,6 +39,9 @@ interface HeaderNavProps {
   onUndo: () => void;
   onRedo: () => void;
   onRequestDeleteBook?: () => void;
+  syncStatus?: SyncStatus;
+  syncMessage?: string;
+  onShareLink?: () => void;
 }
 
 export const HeaderNav: React.FC<HeaderNavProps> = ({
@@ -59,6 +65,9 @@ export const HeaderNav: React.FC<HeaderNavProps> = ({
   onUndo,
   onRedo,
   onRequestDeleteBook,
+  syncStatus = 'connected',
+  syncMessage,
+  onShareLink,
 }) => {
   const campusCourses = courses.filter((c) => c.campus === currentCampus);
   const otherCampusName = currentCampus === 'curitiba' ? 'FATEC' : 'Curitiba';
@@ -181,6 +190,41 @@ export const HeaderNav: React.FC<HeaderNavProps> = ({
 
         {/* Zone 3: Actions (+ Nova Atividade, Apresentar, Baixar PPTX, Baixar PDF) */}
         <div className="flex items-center gap-1.5 shrink-0">
+          {/* Cloud Database Sync Status Indicator */}
+          <div 
+            className={`hidden xl:flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs font-semibold ${
+              syncStatus === 'syncing'
+                ? 'bg-amber-50 text-amber-700 border-amber-200'
+                : syncStatus === 'error'
+                ? 'bg-rose-50 text-rose-700 border-rose-200'
+                : 'bg-emerald-50 text-emerald-700 border-emerald-200'
+            }`}
+            title={syncMessage || 'Todas as alterações são salvas automaticamente no banco de dados e refletem em tempo real'}
+          >
+            <span className={`w-2 h-2 rounded-full ${
+              syncStatus === 'syncing'
+                ? 'bg-amber-500 animate-ping'
+                : syncStatus === 'error'
+                ? 'bg-rose-500'
+                : 'bg-emerald-500'
+            }`} />
+            <span>
+              {syncStatus === 'syncing' ? 'Salvando...' : syncStatus === 'error' ? 'Erro ao sincronizar' : 'Banco em Tempo Real'}
+            </span>
+          </div>
+
+          {/* Share Link button */}
+          {onShareLink && (
+            <button
+              onClick={onShareLink}
+              title="Compartilhar Link da plataforma (as edições ficam salvas e todos com o link veem em tempo real)"
+              className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold text-[#004B8D] bg-sky-50 hover:bg-sky-100 border border-sky-200 rounded-lg transition-colors whitespace-nowrap"
+            >
+              <Share2 className="w-3.5 h-3.5 text-[#00A3E0]" />
+              <span className="hidden sm:inline">Compartilhar Link</span>
+            </button>
+          )}
+
           {/* + Nova atividade button */}
           <button
             onClick={onOpenNewActivity}
