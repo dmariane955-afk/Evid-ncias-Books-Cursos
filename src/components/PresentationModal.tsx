@@ -329,27 +329,40 @@ export const PresentationModal: React.FC<PresentationModalProps> = ({
                 )}
               </div>
 
-              <div className="w-7/12 flex items-center justify-center">
+              <div className="w-7/12 flex items-center justify-center relative">
                 {currentSlide.photos && currentSlide.photos.length > 0 ? (
                   <div
                     className={`grid gap-2 w-full h-full ${
-                      currentSlide.photos.length === 2 ? 'grid-cols-2' : 'grid-cols-1'
+                      currentSlide.photoLayout === 'split-50-50' || currentSlide.photos.length === 2
+                        ? 'grid-cols-2'
+                        : currentSlide.photoLayout === 'grid-3' || currentSlide.photos.length === 3
+                        ? 'grid-cols-3'
+                        : 'grid-cols-1'
                     }`}
                   >
                     {currentSlide.photos.map((p) => (
                       <div
                         key={p.id}
+                        style={{
+                          aspectRatio: p.aspectRatio === '16/9' ? '16/9' : p.aspectRatio === '4/3' ? '4/3' : p.aspectRatio === '1/1' ? '1/1' : undefined,
+                        }}
                         className="rounded-lg overflow-hidden border border-slate-200 relative bg-slate-100 flex flex-col justify-between"
                       >
-                        <img
-                          src={p.url}
-                          alt={p.caption || 'Foto'}
-                          className={`w-full h-full ${
-                            p.fit === 'contain' ? 'object-contain' : 'object-cover'
-                          }`}
-                        />
+                        <div className="relative w-full h-full min-h-[170px] overflow-hidden">
+                          <img
+                            src={p.url}
+                            alt={p.caption || 'Foto'}
+                            className={`w-full h-full ${
+                              p.fit === 'contain' ? 'object-contain' : 'object-cover'
+                            }`}
+                            style={{
+                              transform: `scale(${(p.zoom || 1) * (p.scale || 1)}) translate(${p.x || 0}%, ${p.y || 0}%) rotate(${p.rotation || 0}deg)`,
+                              objectPosition: p.position === 'top' ? 'top center' : p.position === 'bottom' ? 'bottom center' : p.position === 'left' ? 'left center' : p.position === 'right' ? 'right center' : `${p.cropX ?? 50}% ${p.cropY ?? 50}%`,
+                            }}
+                          />
+                        </div>
                         {p.caption && (
-                          <div className="p-1.5 bg-white/90 text-[10px] text-slate-700 italic border-t border-slate-200 truncate">
+                          <div className="p-1.5 bg-white/95 text-[10px] text-slate-700 italic border-t border-slate-200 truncate">
                             {p.caption}
                           </div>
                         )}
@@ -359,6 +372,26 @@ export const PresentationModal: React.FC<PresentationModalProps> = ({
                 ) : (
                   <div className="text-slate-400 text-xs">Registro textual de evidência</div>
                 )}
+
+                {/* Render custom text boxes in presentation mode */}
+                {(currentSlide.customTextBoxes || []).map((box) => (
+                  <div
+                    key={box.id}
+                    style={{
+                      left: `${box.x}%`,
+                      top: `${box.y}%`,
+                      width: `${box.width}%`,
+                      fontSize: `${box.fontSize || 14}px`,
+                      color: box.color || '#0F172A',
+                      fontWeight: box.bold ? 'bold' : 'normal',
+                      fontStyle: box.italic ? 'italic' : 'normal',
+                      textAlign: box.align || 'left',
+                    }}
+                    className="absolute z-30 pointer-events-none p-1 leading-relaxed"
+                  >
+                    {box.text}
+                  </div>
+                ))}
               </div>
             </div>
 

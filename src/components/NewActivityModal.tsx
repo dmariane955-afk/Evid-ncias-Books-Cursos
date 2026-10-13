@@ -49,8 +49,8 @@ export const NewActivityModal: React.FC<NewActivityModalProps> = ({
   const [complementaryText, setComplementaryText] = useState('');
   const [photos, setPhotos] = useState<PhotoItem[]>([]);
   const [syncWithOtherCampus, setSyncWithOtherCampus] = useState(false);
-  const [selectedCourseIds, setSelectedCourseIds] = useState<string[]>([]);
-  const [selectedOtherCampusCourseIds, setSelectedOtherCampusCourseIds] = useState<string[]>([]);
+  const [selectedCourseId, setSelectedCourseId] = useState<string>('');
+  const [selectedOtherCampusCourseId, setSelectedOtherCampusCourseId] = useState<string>('');
   const [applyScope, setApplyScope] = useState<'current' | 'all'>('current');
   const [isGeneratingAI, setIsGeneratingAI] = useState(false);
   const [aiSeed, setAiSeed] = useState(0);
@@ -76,27 +76,25 @@ export const NewActivityModal: React.FC<NewActivityModalProps> = ({
       setComplementaryText(editingActivity.complementaryText || '');
       setPhotos([...editingActivity.photos]);
       
-      const currentCampusIds = editingActivity.targetCourseIds.filter((id) =>
-        currentCampusCourses.some((c) => c.id === id)
-      );
-      const otherCampusIds = editingActivity.targetCourseIds.filter((id) =>
+      const targetCId = editingActivity.courseId || editingActivity.targetCourseIds?.[0] || initialCourseId || currentCampusCourses[0]?.id || '';
+      setSelectedCourseId(targetCId);
+
+      const otherCampusIds = (editingActivity.targetCourseIds || []).filter((id) =>
         otherCampusCourses.some((c) => c.id === id)
       );
-
-      setSelectedCourseIds(currentCampusIds.length > 0 ? currentCampusIds : (initialCourseId ? [initialCourseId] : []));
-      setSelectedOtherCampusCourseIds(otherCampusIds);
+      setSelectedOtherCampusCourseId(otherCampusIds[0] || '');
       setSyncWithOtherCampus(otherCampusIds.length > 0);
       setApplyScope('current');
     } else {
-      // New activity
+      // New activity - isolated strictly to initialCourseId or first course of current campus
       const defaultCourseId = initialCourseId || currentCampusCourses[0]?.id || '';
       setTitle('');
       setDate(new Date().toISOString().split('T')[0]);
       setTime('14:00');
       const defaultType: ActivityType = isSharedMode ? 'Atividade colaborativa interdisciplinar' : 'Atividade regular';
       setActivityType(defaultType);
-      setSelectedCourseIds(defaultCourseId ? [defaultCourseId] : []);
-      setSelectedOtherCampusCourseIds([]);
+      setSelectedCourseId(defaultCourseId);
+      setSelectedOtherCampusCourseId('');
       setSyncWithOtherCampus(false);
       setComplementaryText('');
       setAiSeed(0);
@@ -206,42 +204,26 @@ export const NewActivityModal: React.FC<NewActivityModalProps> = ({
     fileInputRef.current?.click();
   };
 
-  const toggleCurrentCampusCourse = (courseId: string) => {
-    setSelectedCourseIds((prev) => {
-      if (prev.includes(courseId)) {
-        if (prev.length === 1 && !syncWithOtherCampus) return prev;
-        return prev.filter((id) => id !== courseId);
-      } else {
-        return [...prev, courseId];
-      }
-    });
-  };
-
-  const toggleOtherCampusCourse = (courseId: string) => {
-    setSelectedOtherCampusCourseIds((prev) =>
-      prev.includes(courseId) ? prev.filter((id) => id !== courseId) : [...prev, courseId]
-    );
-  };
-
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    const finalCourseIds = [
-      ...selectedCourseIds,
-      ...(syncWithOtherCampus ? selectedOtherCampusCourseIds : []),
-    ];
-
-    if (finalCourseIds.length === 0) {
-      alert('Selecione pelo menos um Book/Curso para vincular esta atividade.');
+    if (!selectedCourseId) {
+      alert('Selecione o Book de destino para esta atividade.');
       return;
     }
 
-    const originalCampus = editingActivity?.primaryCampus || currentCampus;
-    const finalSyncedCampuses: CampusId[] = syncWithOtherCampus
-      ? ['curitiba', 'fatec']
-      : [originalCampus];
+    const primaryCourse = courses.find((c) => c.id === selectedCourseId);
+    const targetCampus: CampusId = primaryCourse?.campus || editingActivity?.campus || currentCampus;
+    const finalCourseIds = [selectedCourseId];
+    if (syncWithOtherCampus && selectedOtherCampusCourseId) {
+      finalCourseIds.push(selectedOtherCampusCourseId);
+    }
 
     const activityData: ActivityItem = {
-      id: editingActivity ? editingActivity.id : `act-${Date.now()}`,
+      id: editingActivity ? editingActivity.id : `act-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+      bookId: `book-${selectedCourseId}`,
+      campus: targetCampus,
+      unitId: targetCampus,
+      courseId: selectedCourseId,
       title: title.trim() || `Atividade de ${activityType}`,
       date,
       time,
@@ -250,9 +232,9 @@ export const NewActivityModal: React.FC<NewActivityModalProps> = ({
       complementaryText: complementaryText.trim(),
       photos,
       targetCourseIds: finalCourseIds,
-      primaryCampus: originalCampus,
-      syncedCampuses: finalSyncedCampuses,
-      isShared: finalCourseIds.length > 1,
+      primaryCampus: targetCampus,
+      syncedCampuses: syncWithOtherCampus ? ['curitiba', 'fatec'] : [targetCampus],
+      isShared: syncWithOtherCampus && !!selectedOtherCampusCourseId,
       createdAt: editingActivity ? editingActivity.createdAt : new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
@@ -523,113 +505,89 @@ export const NewActivityModal: React.FC<NewActivityModalProps> = ({
             </p>
           </div>
 
-          {/* 4. SELEÇÃO DO BOOK & SINCRONIZAÇÃO ENTRE AMBIENTES */}
+          {/* 4. SELEÇÃO DO BOOK & ISOLAMENTO TOTAL ENTRE BOOKS E POLOS */}
           <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-4">
             <div className="flex items-center justify-between border-b border-slate-200 pb-2">
               <span className="font-bold text-slate-800 flex items-center gap-1.5">
                 <span className="w-2.5 h-2.5 rounded-full bg-[#00A3E0]" />
-                <span>Ambiente Atual: <strong>{currentCampus === 'curitiba' ? 'CURITIBA' : 'FATEC'}</strong></span>
+                <span>Polo de Origem: <strong>{currentCampus === 'curitiba' ? 'CURITIBA' : 'FATEC'}</strong></span>
               </span>
-              <span className="text-[11px] text-slate-500 font-mono">
-                {currentCampusCourses.length} cursos disponíveis
+              <span className="text-[11px] text-emerald-700 font-bold bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                🔒 Isolamento Total Ativo
               </span>
             </div>
 
-            {/* Courses of CURRENT campus */}
+            {/* Destination Book Selector (Strictly 1 Book by default) */}
             <div>
-              <span className="text-[11px] font-bold text-slate-700 block mb-1.5">
-                Books de {currentCampus === 'curitiba' ? 'Curitiba' : 'FATEC'} que receberão esta atividade:
-              </span>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                {currentCampusCourses.map((c) => {
-                  const isChecked = selectedCourseIds.includes(c.id);
-                  return (
-                    <label
-                      key={c.id}
-                      className={`flex items-center gap-2 p-2 rounded-lg border cursor-pointer transition-all ${
-                        isChecked
-                          ? 'border-[#00A3E0] bg-white font-semibold text-[#004B8D] shadow-2xs'
-                          : 'border-slate-200 bg-white/60 text-slate-600 hover:bg-white'
-                      }`}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={isChecked}
-                        onChange={() => toggleCurrentCampusCourse(c.id)}
-                        className="rounded border-slate-300 text-[#004B8D] focus:ring-[#00A3E0]"
-                      />
-                      <span className="truncate">
-                        Book: <strong>{c.name}</strong>
-                      </span>
-                    </label>
-                  );
-                })}
+              <label className="text-xs font-bold text-slate-800 block mb-1.5">
+                Book de Destino desta Atividade:
+              </label>
+              <select
+                value={selectedCourseId}
+                onChange={(e) => setSelectedCourseId(e.target.value)}
+                className="w-full bg-white border border-slate-300 rounded-lg p-2.5 text-xs font-bold text-[#001D3D] focus:outline-hidden focus:ring-2 focus:ring-[#00A3E0]"
+              >
+                {currentCampusCourses.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    Book: {c.name} ({currentCampus === 'curitiba' ? 'Curitiba' : 'FATEC'})
+                  </option>
+                ))}
+              </select>
+
+              <div className="mt-2 p-2.5 bg-blue-50/70 border border-blue-200/80 rounded-lg text-[11px] text-blue-900 leading-relaxed">
+                <strong>Regra de Isolamento:</strong> Esta atividade pertence com exclusividade a este Book. Não será compartilhada, replicada nem herdada automaticamente por outros cursos (como Biomedicina, Enfermagem, etc.) ou outras unidades.
               </div>
             </div>
 
-            {/* Optional Sincronização com o outro ambiente (FATEC ou Curitiba) */}
+            {/* Optional Explicit Synchronization (Apenas mediante solicitação expressa do usuário) */}
             <div className="pt-3 border-t border-slate-200 space-y-2">
               <div className="flex items-center justify-between">
-                <span className="font-bold text-slate-800">
-                  Sincronização com {otherCampus === 'curitiba' ? 'Curitiba' : 'FATEC'}:
+                <span className="text-xs font-bold text-slate-700">
+                  Sincronização Externa (Opcional):
                 </span>
-                <label className="flex items-center gap-1.5 cursor-pointer bg-white px-2.5 py-1 rounded-md border border-slate-300">
+                <label className="flex items-center gap-1.5 cursor-pointer bg-white px-2.5 py-1 rounded-md border border-slate-300 hover:border-slate-400">
                   <input
                     type="checkbox"
                     checked={syncWithOtherCampus}
                     onChange={(e) => {
                       const checked = e.target.checked;
                       setSyncWithOtherCampus(checked);
-                      if (checked && selectedOtherCampusCourseIds.length === 0 && otherCampusCourses.length > 0) {
-                        setSelectedOtherCampusCourseIds([otherCampusCourses[0].id]);
+                      if (checked && !selectedOtherCampusCourseId && otherCampusCourses.length > 0) {
+                        setSelectedOtherCampusCourseId(otherCampusCourses[0].id);
                       }
                     }}
                     className="rounded text-[#004B8D] focus:ring-[#00A3E0]"
                   />
                   <span className="text-xs font-bold text-[#004B8D]">
-                    Sincronizar com {otherCampus === 'curitiba' ? 'Curitiba' : 'FATEC'}
+                    Habilitar cópia explícita para {otherCampus === 'curitiba' ? 'Curitiba' : 'FATEC'}
                   </span>
                 </label>
               </div>
 
               {!syncWithOtherCampus ? (
-                <p className="text-[11px] text-slate-500">
-                  Por padrão, esta atividade permanecerá <strong>exclusivamente</strong> no ambiente {currentCampus === 'curitiba' ? 'Curitiba' : 'FATEC'}.
+                <p className="text-[10px] text-slate-500">
+                  Por padrão, esta atividade permanecerá 100% isolada e autônoma neste Book.
                 </p>
               ) : (
                 <div className="p-3 bg-sky-50/70 border border-[#00A3E0]/40 rounded-lg space-y-2">
                   <span className="text-[11px] font-bold text-[#004B8D] block">
-                    Selecione os Books de {otherCampus === 'curitiba' ? 'Curitiba' : 'FATEC'} de destino:
+                    Selecione o Book específico de destino em {otherCampus === 'curitiba' ? 'Curitiba' : 'FATEC'}:
                   </span>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                    {otherCampusCourses.length === 0 ? (
-                      <p className="text-slate-400 italic text-[11px]">Nenhum curso cadastrado no polo {otherCampus}.</p>
-                    ) : (
-                      otherCampusCourses.map((oc) => {
-                        const isChecked = selectedOtherCampusCourseIds.includes(oc.id);
-                        return (
-                          <label
-                            key={oc.id}
-                            className={`flex items-center gap-2 p-2 rounded-lg border cursor-pointer transition-all ${
-                              isChecked
-                                ? 'border-[#00A3E0] bg-white font-bold text-[#004B8D] shadow-2xs'
-                                : 'border-slate-200 bg-white/70 text-slate-600 hover:bg-white'
-                            }`}
-                          >
-                            <input
-                              type="checkbox"
-                              checked={isChecked}
-                              onChange={() => toggleOtherCampusCourse(oc.id)}
-                              className="rounded border-slate-300 text-[#004B8D] focus:ring-[#00A3E0]"
-                            />
-                            <span className="truncate">
-                              Book: <strong>{oc.name}</strong> ({otherCampus === 'curitiba' ? 'Curitiba' : 'FATEC'})
-                            </span>
-                          </label>
-                        );
-                      })
-                    )}
-                  </div>
+                  {otherCampusCourses.length === 0 ? (
+                    <p className="text-slate-400 italic text-[11px]">Nenhum curso cadastrado no polo {otherCampus}.</p>
+                  ) : (
+                    <select
+                      value={selectedOtherCampusCourseId}
+                      onChange={(e) => setSelectedOtherCampusCourseId(e.target.value)}
+                      className="w-full bg-white border border-slate-300 rounded-lg p-2 text-xs font-semibold text-slate-800 focus:outline-hidden"
+                    >
+                      {otherCampusCourses.map((oc) => (
+                        <option key={oc.id} value={oc.id}>
+                          Book: {oc.name} ({otherCampus === 'curitiba' ? 'Curitiba' : 'FATEC'})
+                        </option>
+                      ))}
+                    </select>
+                  )}
                 </div>
               )}
             </div>

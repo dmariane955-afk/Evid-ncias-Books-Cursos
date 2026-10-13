@@ -27,13 +27,35 @@ export type PhotoLayout = 'single' | 'split-50-50' | 'split-70-30' | 'grid-3' | 
 
 export type PhotoFit = 'cover' | 'contain';
 
+export interface PhotoCrop {
+  x: number;
+  y: number;
+  zoom?: number;
+}
+
 export interface PhotoItem {
   id: string;
   url: string;
   caption?: string;
   fit?: PhotoFit;
-  zoom?: number;
-  position?: 'center' | 'top' | 'bottom' | 'left' | 'right';
+  zoom?: number; // Zoom multiplier (0.5 to 3.0, default 1)
+  position?: 'center' | 'top' | 'bottom' | 'left' | 'right' | string;
+  // Manual interactive transform & crop properties (Canva/Figma style):
+  x?: number; // Horizontal pan offset / relative position
+  y?: number; // Vertical pan offset / relative position
+  width?: number; // Custom width
+  height?: number; // Custom height
+  widthPercent?: number; // Custom container width percentage (20 to 100)
+  heightPx?: number; // Custom container height in px
+  scale?: number; // Scale multiplier (0.5 to 3.0)
+  scaleX?: number;
+  scaleY?: number;
+  rotation?: number; // Rotation in degrees (-180 to 180)
+  aspectRatio?: '16/9' | '4/3' | '1/1' | 'auto' | string;
+  crop?: PhotoCrop;
+  cropX?: number; // Focal center X percentage (0 to 100)
+  cropY?: number; // Focal center Y percentage (0 to 100)
+  objectPosition?: string;
 }
 
 export interface TextBoxElement {
@@ -52,6 +74,10 @@ export interface TextBoxElement {
 
 export interface ActivityItem {
   id: string;
+  bookId: string; // ID explícito e inequívoco do Book ao qual a atividade pertence
+  campus: CampusId; // Unidade/Campus explícito ('curitiba' | 'fatec')
+  unitId?: CampusId; // Alias para compatibilidade estrutural
+  courseId: string; // Curso ao qual o Book pertence
   title: string;
   date: string;
   time: string;
@@ -59,9 +85,9 @@ export interface ActivityItem {
   objective: string;
   complementaryText?: string;
   photos: PhotoItem[];
-  targetCourseIds: string[];
-  primaryCampus?: CampusId; // Campus where it originated
-  syncedCampuses?: CampusId[]; // e.g. ['curitiba', 'fatec'] if user opted to sync
+  targetCourseIds: string[]; // Mantido para compatibilidade
+  primaryCampus?: CampusId; // Campus de origem
+  syncedCampuses?: CampusId[]; // e.g. ['curitiba', 'fatec'] se compartilhado explicitamente
   syncedBookIds?: string[];
   isShared: boolean;
   createdAt: string;

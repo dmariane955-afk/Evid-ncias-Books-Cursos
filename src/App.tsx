@@ -286,16 +286,35 @@ export default function App() {
         onCoursesLoaded: (loadedCourses) => {
           if (loadedCourses && loadedCourses.length > 0) {
             setCourses(loadedCourses);
+            try {
+              localStorage.setItem(STORAGE_COURSES_KEY, JSON.stringify(loadedCourses));
+            } catch (e) {
+              console.warn(e);
+            }
           }
         },
         onActivitiesLoaded: (loadedActivities) => {
           if (loadedActivities && loadedActivities.length > 0) {
             setActivities(loadedActivities);
+            try {
+              localStorage.setItem(STORAGE_ACTIVITIES_KEY, JSON.stringify(loadedActivities));
+            } catch (e) {
+              console.warn(e);
+            }
           }
         },
         onBooksLoaded: (loadedBooks) => {
           if (loadedBooks && loadedBooks.length > 0) {
-            setBooks(loadedBooks);
+            const sortedBooks = loadedBooks.map((b) => ({
+              ...b,
+              slides: (b.slides || []).sort((s1, s2) => (s1.order || 0) - (s2.order || 0)),
+            }));
+            setBooks(sortedBooks);
+            try {
+              localStorage.setItem(STORAGE_BOOKS_KEY, JSON.stringify(sortedBooks));
+            } catch (e) {
+              console.warn(e);
+            }
           }
         },
         onStatusChange: (status, message) => {
@@ -330,8 +349,12 @@ export default function App() {
     }
   };
 
-  // Get active book and active slide
-  const currentBook = books.find((b) => b.courseId === currentCourseId) || books.find((b) => b.campus === currentCampus) || books[0];
+  // Get active book and active slide (STRICTLY ISOLATED TO CURRENT CAMPUS FIRST)
+  const currentBook =
+    books.find((b) => b.courseId === currentCourseId && b.campus === currentCampus) ||
+    books.find((b) => b.campus === currentCampus) ||
+    books.find((b) => b.courseId === currentCourseId) ||
+    books[0];
   const activeSlide = currentBook?.slides.find((s) => s.id === activeSlideId) || currentBook?.slides[0];
 
   useEffect(() => {
@@ -340,22 +363,62 @@ export default function App() {
     }
   }, [currentBook, activeSlideId]);
 
-  // Autosave active book to Firestore when modified (debounced 400ms)
-  useEffect(() => {
-    if (!isInitialSyncDone.current || !currentBook) return;
-    setSyncStatus('syncing');
-    setSyncMessage('Salvando alterações no banco de dados...');
+  // Centralized persistent saver for books with immediate/debounced dispatch and real status tracking
+  const persistBookUpdate = useCallback(
+    (updatedBook: AcademicBook, immediate: boolean = false) => {
+      // 1. Update React state immediately
+      setBooks((prev) => prev.map((b) => (b.id === updatedBook.id ? updatedBook : b)));
 
-    if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
-    saveTimeoutRef.current = setTimeout(async () => {
-      await saveBookToFirestore(currentBook);
-      setSyncStatus('connected');
-      setSyncMessage('Sincronizado na nuvem (Tempo Real)');
-    }, 450);
+      // 2. Persist to localStorage immediately (offline cache fallback)
+      try {
+        const stored = JSON.parse(localStorage.getItem(STORAGE_BOOKS_KEY) || '[]');
+        const updatedList = stored.map((b: AcademicBook) => (b.id === updatedBook.id ? updatedBook : b));
+        localStorage.setItem(STORAGE_BOOKS_KEY, JSON.stringify(updatedList));
+      } catch (e) {
+        console.warn('LocalStorage error:', e);
+      }
 
-    return () => {
+      // 3. Clear any pending debounce timeout
       if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+
+      setSyncStatus('syncing');
+      setSyncMessage('Salvando alterações no banco de dados...');
+
+      const doSave = async () => {
+        try {
+          const success = await saveBookToFirestore(updatedBook);
+          if (success) {
+            setSyncStatus('connected');
+            setSyncMessage('Salvo no banco de dados');
+          } else {
+            setSyncStatus('error');
+            setSyncMessage('Não foi possível salvar. Tente novamente.');
+          }
+        } catch (err) {
+          console.error('Error saving book to Firestore:', err);
+          setSyncStatus('error');
+          setSyncMessage('Não foi possível salvar. Tente novamente.');
+        }
+      };
+
+      if (immediate) {
+        doSave();
+      } else {
+        saveTimeoutRef.current = setTimeout(doSave, 300);
+      }
+    },
+    []
+  );
+
+  // Guarantee flush on page refresh / window close
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      if (currentBook) {
+        saveBookToFirestore(currentBook);
+      }
     };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
   }, [currentBook]);
 
   // Handle Share Link for Real-time Collaboration
@@ -373,28 +436,31 @@ export default function App() {
   // Update a book's properties
   const handleUpdateBook = (updated: Partial<AcademicBook>) => {
     pushHistorySnapshot();
-    setBooks((prev) =>
-      prev.map((b) => (b.id === currentBook.id ? { ...b, ...updated, updatedAt: new Date().toISOString() } : b))
-    );
+    const updatedBook: AcademicBook = {
+      ...currentBook,
+      ...updated,
+      updatedAt: new Date().toISOString(),
+    };
+    persistBookUpdate(updatedBook, true);
   };
 
   // Update current active slide in current book
   const handleUpdateActiveSlide = (updated: Partial<SlideData>) => {
     pushHistorySnapshot();
-    setBooks((prev) =>
-      prev.map((b) => {
-        if (b.id !== currentBook.id) return b;
-        const updatedSlides = b.slides.map((s) => (s.id === activeSlide.id ? { ...s, ...updated } : s));
-        return { ...b, slides: updatedSlides, updatedAt: new Date().toISOString() };
-      })
-    );
+    const updatedSlides = currentBook.slides.map((s) => (s.id === activeSlide.id ? { ...s, ...updated } : s));
+    const updatedBook: AcademicBook = {
+      ...currentBook,
+      slides: updatedSlides,
+      updatedAt: new Date().toISOString(),
+    };
+    persistBookUpdate(updatedBook, false);
 
-    // If this slide is linked to an activity, update the activity
+    // If this slide is linked to an activity, update the activity and save it to Firestore
     if (activeSlide.activityId) {
       setActivities((prev) =>
         prev.map((act) => {
           if (act.id !== activeSlide.activityId) return act;
-          return {
+          const updatedAct: ActivityItem = {
             ...act,
             title: updated.title !== undefined ? updated.title : act.title,
             date: updated.date !== undefined ? updated.date : act.date,
@@ -404,12 +470,14 @@ export default function App() {
             photos: updated.photos !== undefined ? updated.photos : act.photos,
             updatedAt: new Date().toISOString(),
           };
+          saveActivityToFirestore(updatedAct);
+          return updatedAct;
         })
       );
     }
   };
 
-  // 4. Activity Management with AUTOMATIC MULTI-BOOK SYNCHRONIZATION
+  // 4. Activity Management with STRICT ISOLATION BETWEEN BOOKS & UNITS
   const handleSaveActivity = (activity: ActivityItem, applyToAllSynced: boolean = true) => {
     pushHistorySnapshot();
 
@@ -421,68 +489,76 @@ export default function App() {
       updatedActivities = [activity, ...activities];
     }
     setActivities(updatedActivities);
+    saveActivityToFirestore(activity);
 
-    // Synchronize across Books:
+    // Identify target books explicitly:
+    const targetBookIds = new Set<string>();
+    if (activity.bookId) targetBookIds.add(activity.bookId);
+    (activity.targetCourseIds || []).forEach((cId) => {
+      const c = courses.find((course) => course.id === cId);
+      if (c) {
+        targetBookIds.add(`book-${c.id}`);
+      }
+    });
+
+    // Update ONLY the targeted Books — all other books remain 100% UNTOUCHED
     setBooks((prevBooks) => {
       return prevBooks.map((b) => {
-        const isTargeted = activity.targetCourseIds.includes(b.courseId);
-        const existingSlideIndex = b.slides.findIndex((s) => s.activityId === activity.id);
+        const isTargeted =
+          (activity.bookId && b.id === activity.bookId) ||
+          targetBookIds.has(b.id) ||
+          (activity.courseId === b.courseId && activity.campus === b.campus);
 
-        if (isTargeted) {
-          const updatedSlide: SlideData = {
-            id: existingSlideIndex !== -1 ? b.slides[existingSlideIndex].id : `slide-act-${activity.id}-${b.courseId}`,
-            activityId: activity.id,
-            type: 'evidencia',
-            title: activity.title,
-            subtitle: `${activity.activityType} · ${activity.date}${activity.time ? ` às ${activity.time}` : ''}`,
-            activityType: activity.activityType,
-            date: activity.date,
-            time: activity.time,
-            objective: activity.objective,
-            order: existingSlideIndex !== -1 ? b.slides[existingSlideIndex].order : b.slides.length,
-            photoLayout: activity.photos.length > 1 ? 'split-50-50' : 'single',
-            photos: [...activity.photos],
-            evidenceMeta: {
-              category: activity.activityType,
-              date: activity.date,
-              time: activity.time,
-              location: 'Campus Universitário',
-              discipline: '',
-              professor: b.coordinator || '',
-              studentsCount: 0,
-              actionsReport: activity.objective,
-              pedagogicalImpact: activity.complementaryText || '',
-            },
-            customTextBoxes: existingSlideIndex !== -1 ? b.slides[existingSlideIndex].customTextBoxes || [] : [],
-          };
-
-          if (existingSlideIndex !== -1) {
-            const newSlides = [...b.slides];
-            newSlides[existingSlideIndex] = updatedSlide;
-            return { ...b, slides: newSlides };
-          } else {
-            const newSlides = [...b.slides];
-            const insertIndex = Math.max(1, newSlides.length - 1);
-            newSlides.splice(insertIndex, 0, updatedSlide);
-            const reordered = newSlides.map((s, idx) => ({ ...s, order: idx + 1 }));
-            return { ...b, slides: reordered };
-          }
-        } else {
-          // If not targeted, remove if previously present
-          if (existingSlideIndex !== -1) {
-            const newSlides = b.slides
-              .filter((s) => s.activityId !== activity.id)
-              .map((s, idx) => ({ ...s, order: idx + 1 }));
-            return { ...b, slides: newSlides };
-          }
+        if (!isTargeted) {
+          // TOTAL ISOLATION: NADA é alterado ou removido em outros Books
           return b;
         }
+
+        const existingSlideIndex = b.slides.findIndex((s) => s.activityId === activity.id);
+        const updatedSlide: SlideData = {
+          id: existingSlideIndex !== -1 ? b.slides[existingSlideIndex].id : `slide-act-${b.id}-${activity.id}`,
+          activityId: activity.id,
+          type: 'evidencia',
+          title: activity.title,
+          subtitle: `${activity.activityType} · ${activity.date}${activity.time ? ` às ${activity.time}` : ''}`,
+          activityType: activity.activityType,
+          date: activity.date,
+          time: activity.time,
+          objective: activity.objective,
+          order: existingSlideIndex !== -1 ? b.slides[existingSlideIndex].order : b.slides.length,
+          photoLayout: activity.photos.length > 1 ? 'split-50-50' : 'single',
+          photos: [...activity.photos],
+          evidenceMeta: {
+            category: activity.activityType,
+            date: activity.date,
+            time: activity.time,
+            location: 'Campus Universitário',
+            discipline: '',
+            professor: b.coordinator || '',
+            studentsCount: 0,
+            actionsReport: activity.objective,
+            pedagogicalImpact: activity.complementaryText || '',
+          },
+          customTextBoxes: existingSlideIndex !== -1 ? b.slides[existingSlideIndex].customTextBoxes || [] : [],
+        };
+
+        let newSlides = [...b.slides];
+        if (existingSlideIndex !== -1) {
+          newSlides[existingSlideIndex] = updatedSlide;
+        } else {
+          const insertIndex = Math.max(1, newSlides.length - 1);
+          newSlides.splice(insertIndex, 0, updatedSlide);
+          newSlides = newSlides.map((s, idx) => ({ ...s, order: idx + 1 }));
+        }
+
+        const updatedB = { ...b, slides: newSlides, updatedAt: new Date().toISOString() };
+        saveBookToFirestore(updatedB);
+        return updatedB;
       });
     });
 
     setEditingActivity(null);
     setDroppedImageForNewActivity(null);
-    saveActivityToFirestore(activity);
   };
 
   // 5. EXCLUSÃO REAL DE BOOKS (REQUISITO 1 & 2)
@@ -981,9 +1057,12 @@ export default function App() {
     slides[targetIndex] = temp;
 
     const reordered = slides.map((s, idx) => ({ ...s, order: idx + 1 }));
-    setBooks((prev) =>
-      prev.map((b) => (b.id === currentBook.id ? { ...b, slides: reordered } : b))
-    );
+    const updatedBook: AcademicBook = {
+      ...currentBook,
+      slides: reordered,
+      updatedAt: new Date().toISOString(),
+    };
+    persistBookUpdate(updatedBook, true);
   };
 
   const handleDuplicateSlide = (slideId: string) => {
@@ -991,7 +1070,7 @@ export default function App() {
     if (!target) return;
     pushHistorySnapshot();
 
-    const newId = `slide-${Date.now()}`;
+    const newId = `slide-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
     const duplicated: SlideData = {
       ...JSON.parse(JSON.stringify(target)),
       id: newId,
@@ -1004,9 +1083,12 @@ export default function App() {
     updated.splice(targetIdx + 1, 0, duplicated);
 
     const reordered = updated.map((s, idx) => ({ ...s, order: idx + 1 }));
-    setBooks((prev) =>
-      prev.map((b) => (b.id === currentBook.id ? { ...b, slides: reordered } : b))
-    );
+    const updatedBook: AcademicBook = {
+      ...currentBook,
+      slides: reordered,
+      updatedAt: new Date().toISOString(),
+    };
+    persistBookUpdate(updatedBook, true);
     setActiveSlideId(newId);
   };
 
@@ -1017,15 +1099,20 @@ export default function App() {
       title: 'Excluir slide?',
       itemName: activeSlide?.title || 'Slide selecionado',
       description: 'Deseja excluir este slide do Book de Evidências?',
+      warningNote: 'A exclusão é salva permanentemente no banco de dados em tempo real.',
       onConfirm: () => {
         pushHistorySnapshot();
         const updated = currentBook.slides
           .filter((s) => s.id !== slideId)
           .map((s, idx) => ({ ...s, order: idx + 1 }));
 
-        setBooks((prev) =>
-          prev.map((b) => (b.id === currentBook.id ? { ...b, slides: updated } : b))
-        );
+        const updatedBook: AcademicBook = {
+          ...currentBook,
+          slides: updated,
+          updatedAt: new Date().toISOString(),
+        };
+        persistBookUpdate(updatedBook, true);
+
         if (activeSlideId === slideId) {
           setActiveSlideId(updated[0]?.id || '');
         }
@@ -1035,7 +1122,7 @@ export default function App() {
 
   const handleAddSlideFromTemplate = (template: Partial<SlideData>) => {
     pushHistorySnapshot();
-    const newId = `slide-${Date.now()}`;
+    const newId = `slide-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
     const newSlide: SlideData = {
       id: newId,
       type: template.type || 'evidencia',
@@ -1050,9 +1137,12 @@ export default function App() {
     };
 
     const updated = [...currentBook.slides, newSlide].map((s, idx) => ({ ...s, order: idx + 1 }));
-    setBooks((prev) =>
-      prev.map((b) => (b.id === currentBook.id ? { ...b, slides: updated } : b))
-    );
+    const updatedBook: AcademicBook = {
+      ...currentBook,
+      slides: updated,
+      updatedAt: new Date().toISOString(),
+    };
+    persistBookUpdate(updatedBook, true);
     setActiveSlideId(newId);
   };
 

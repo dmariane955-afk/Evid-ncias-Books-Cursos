@@ -160,20 +160,24 @@ export const SlideThumbnails: React.FC<SlideThumbnailsProps> = ({
               </div>
 
               {/* Slide thumbnail miniature preview (16:9 aspect box) */}
-              <div className={`relative aspect-16/9 w-full rounded-sm border overflow-hidden flex flex-col justify-between p-1.5 pointer-events-none ${
+              <div className={`relative aspect-16/9 w-full rounded-sm border overflow-hidden flex flex-col justify-between p-1.5 pointer-events-none select-none ${
                 slide.type === 'capa' ? 'bg-[#001D3D] text-white border-[#00A3E0]/40' : 'bg-slate-100 text-slate-800 border-slate-200'
               }`}>
                 {/* Mini top cyan bar */}
-                <div className="absolute top-0 left-0 right-0 h-0.5 bg-[#00A3E0]" />
+                <div className="absolute top-0 left-0 right-0 h-0.5 bg-[#00A3E0] z-20" />
 
                 {slide.type === 'capa' ? (
                   <>
-                    {slide.photos[0]?.url && (
+                    {slide.photos && slide.photos[0]?.url && (
                       <div className="absolute top-0 bottom-0 right-0 w-3/5 overflow-hidden pointer-events-none">
                         <img
                           src={slide.photos[0].url}
                           alt="Capa"
-                          className="w-full h-full object-cover opacity-80"
+                          className="w-full h-full object-cover opacity-85"
+                          style={{
+                            transform: `scale(${slide.photos[0].zoom || 1}) translate(${slide.photos[0].x || 0}%, ${slide.photos[0].y || 0}%) rotate(${slide.photos[0].rotation || 0}deg)`,
+                            objectPosition: slide.photos[0].position === 'top' ? 'top center' : slide.photos[0].position === 'bottom' ? 'bottom center' : slide.photos[0].position === 'left' ? 'left center' : slide.photos[0].position === 'right' ? 'right center' : `${slide.photos[0].cropX ?? 50}% ${slide.photos[0].cropY ?? 50}%`,
+                          }}
                         />
                         <div
                           className="absolute inset-0"
@@ -204,37 +208,120 @@ export const SlideThumbnails: React.FC<SlideThumbnailsProps> = ({
                       </div>
                     </div>
                   </>
+                ) : slide.type === 'evidencia' ? (
+                  /* Slide de Evidência com visualização real das fotos e textos */
+                  <div className="relative z-10 flex flex-col justify-between h-full pt-0.5">
+                    <div>
+                      <div className="flex items-center justify-between text-[6.5px] text-[#00A3E0] font-bold tracking-tight uppercase truncate">
+                        <span className="truncate max-w-[110px]">{slide.activityType || 'ATIVIDADE'}</span>
+                        <span className="font-mono text-slate-400">{slide.date || ''}</span>
+                      </div>
+                      <div className="text-[8px] font-bold text-slate-900 line-clamp-1 leading-tight">
+                        {slide.title || 'Atividade sem título'}
+                      </div>
+                    </div>
+
+                    {/* Miniature Photos Display (Renderiza fotos reais com layouts e transformações) */}
+                    {slide.photos && slide.photos.length > 0 ? (
+                      <div
+                        className={`my-1 flex-1 min-h-[32px] max-h-[46px] grid gap-1 overflow-hidden rounded-xs bg-slate-200/60 ${
+                          slide.photoLayout === 'split-50-50' || slide.photos.length === 2
+                            ? 'grid-cols-2'
+                            : slide.photoLayout === 'grid-3' || slide.photos.length === 3
+                            ? 'grid-cols-3'
+                            : 'grid-cols-1'
+                        }`}
+                      >
+                        {slide.photos.slice(0, 3).map((ph, pIdx) => (
+                          <div key={ph.id || pIdx} className="relative w-full h-full overflow-hidden bg-slate-300 rounded-[1px]">
+                            <img
+                              src={ph.url}
+                              alt=""
+                              className={`w-full h-full ${ph.fit === 'contain' ? 'object-contain' : 'object-cover'}`}
+                              style={{
+                                transform: `scale(${(ph.zoom || 1) * (ph.scale || 1)}) translate(${ph.x || 0}%, ${ph.y || 0}%) rotate(${ph.rotation || 0}deg)`,
+                                objectPosition: ph.position === 'top' ? 'top center' : ph.position === 'bottom' ? 'bottom center' : ph.position === 'left' ? 'left center' : ph.position === 'right' ? 'right center' : `${ph.cropX ?? 50}% ${ph.cropY ?? 50}%`,
+                              }}
+                            />
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="my-1 flex-1 min-h-[32px] p-1 bg-slate-50 border border-slate-200 rounded-xs flex items-center justify-center">
+                        <p className="text-[6.5px] text-slate-500 line-clamp-2 italic leading-tight">
+                          {slide.objective || 'Aguardando inserção de imagens...'}
+                        </p>
+                      </div>
+                    )}
+
+                    {/* Render custom free text boxes miniature */}
+                    {(slide.customTextBoxes || []).map((box) => (
+                      <div
+                        key={box.id}
+                        style={{
+                          left: `${box.x}%`,
+                          top: `${box.y}%`,
+                          width: `${box.width}%`,
+                          color: box.color || '#0F172A',
+                          fontWeight: box.bold ? 'bold' : 'normal',
+                          fontStyle: box.italic ? 'italic' : 'normal',
+                        }}
+                        className="absolute z-20 text-[5px] leading-tight line-clamp-1 pointer-events-none overflow-hidden"
+                      >
+                        {box.text}
+                      </div>
+                    ))}
+
+                    <div className="flex items-center justify-between text-[6.5px] text-slate-400 border-t border-slate-200/80 pt-0.5">
+                      <span className="truncate max-w-[90px]">{slide.footerLeftText || 'Estácio'}</span>
+                      <span className="font-mono text-[6px]">16:9</span>
+                    </div>
+                  </div>
                 ) : (
-                  <>
-                    <div className="pt-1">
-                      <div className="text-[9px] font-bold text-slate-800 line-clamp-1">
-                        {slide.title || 'Slide sem título'}
+                  /* Demais slides com títulos e layouts institucionais */
+                  <div className="relative z-10 flex flex-col justify-between h-full pt-0.5">
+                    <div>
+                      <div className="text-[6.5px] text-[#00A3E0] font-bold tracking-tight uppercase truncate">
+                        {slide.type.toUpperCase()}
+                      </div>
+                      <div className="text-[8.5px] font-bold text-slate-800 line-clamp-1 leading-tight">
+                        {slide.title || 'Slide Institucional'}
                       </div>
                       {slide.subtitle && (
-                        <div className="text-[7.5px] text-slate-500 line-clamp-1">
+                        <div className="text-[6.5px] text-slate-500 line-clamp-1">
                           {slide.subtitle}
                         </div>
                       )}
                     </div>
 
-                    {/* Content preview indicators */}
-                    <div className="flex items-center justify-between text-[7px] text-slate-400">
-                      {slide.type === 'evidencia' ? (
-                        <div className="flex items-center gap-1">
-                          {photoCount > 0 ? (
-                            <span className="text-[#00A3E0] font-medium font-mono">
-                              {photoCount} {photoCount === 1 ? 'foto' : 'fotos'}
-                            </span>
-                          ) : (
-                            <span className="text-slate-400">Texto</span>
-                          )}
-                        </div>
-                      ) : (
-                        <span>Padrão Institucional</span>
-                      )}
-                      <span className="font-mono">16:9</span>
+                    <div className="my-auto py-1 grid grid-cols-2 gap-1 opacity-70">
+                      <div className="h-3 rounded-xs bg-[#E0F2FE]/70 border border-[#00A3E0]/30" />
+                      <div className="h-3 rounded-xs bg-slate-100 border border-slate-200" />
                     </div>
-                  </>
+
+                    {/* Render custom free text boxes miniature */}
+                    {(slide.customTextBoxes || []).map((box) => (
+                      <div
+                        key={box.id}
+                        style={{
+                          left: `${box.x}%`,
+                          top: `${box.y}%`,
+                          width: `${box.width}%`,
+                          color: box.color || '#0F172A',
+                          fontWeight: box.bold ? 'bold' : 'normal',
+                          fontStyle: box.italic ? 'italic' : 'normal',
+                        }}
+                        className="absolute z-20 text-[5px] leading-tight line-clamp-1 pointer-events-none overflow-hidden"
+                      >
+                        {box.text}
+                      </div>
+                    ))}
+
+                    <div className="flex items-center justify-between text-[6.5px] text-slate-400 border-t border-slate-200 pt-0.5">
+                      <span className="truncate max-w-[80px]">{slide.footerLeftText || 'Estácio'}</span>
+                      <span className="font-mono text-[6px]">16:9</span>
+                    </div>
+                  </div>
                 )}
               </div>
             </div>

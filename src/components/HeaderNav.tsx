@@ -192,7 +192,7 @@ export const HeaderNav: React.FC<HeaderNavProps> = ({
         <div className="flex items-center gap-1.5 shrink-0">
           {/* Cloud Database Sync Status Indicator */}
           <div 
-            className={`hidden xl:flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs font-semibold ${
+            className={`hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs font-semibold ${
               syncStatus === 'syncing'
                 ? 'bg-amber-50 text-amber-700 border-amber-200'
                 : syncStatus === 'error'
@@ -201,15 +201,19 @@ export const HeaderNav: React.FC<HeaderNavProps> = ({
             }`}
             title={syncMessage || 'Todas as alterações são salvas automaticamente no banco de dados e refletem em tempo real'}
           >
-            <span className={`w-2 h-2 rounded-full ${
+            <span className={`w-2 h-2 rounded-full shrink-0 ${
               syncStatus === 'syncing'
-                ? 'bg-amber-500 animate-ping'
+                ? 'bg-amber-500 animate-pulse'
                 : syncStatus === 'error'
                 ? 'bg-rose-500'
                 : 'bg-emerald-500'
             }`} />
-            <span>
-              {syncStatus === 'syncing' ? 'Salvando...' : syncStatus === 'error' ? 'Erro ao sincronizar' : 'Banco em Tempo Real'}
+            <span className="font-semibold">
+              {syncStatus === 'syncing'
+                ? 'Salvando...'
+                : syncStatus === 'error'
+                ? 'Não foi possível salvar'
+                : 'Salvo'}
             </span>
           </div>
 

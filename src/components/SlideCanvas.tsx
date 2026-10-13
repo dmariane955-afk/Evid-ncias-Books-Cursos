@@ -20,7 +20,13 @@ import {
   BookOpen,
   Move,
   RefreshCw,
-  Image as ImageIcon
+  Image as ImageIcon,
+  ZoomIn,
+  ZoomOut,
+  RotateCw,
+  RotateCcw,
+  Crop,
+  Sliders
 } from 'lucide-react';
 import { AcademicBook, SlideData, PhotoItem, PhotoLayout, PhotoFit, TextBoxElement, ActivityType } from '../types';
 import { CAMPUS_CONFIGS, AREA_CONFIGS } from '../data/defaults';
@@ -53,6 +59,19 @@ export const SlideCanvas: React.FC<SlideCanvasProps> = ({
   const [isDraggingCanvas, setIsDraggingCanvas] = useState(false);
   const [isCoverLibraryOpen, setIsCoverLibraryOpen] = useState(false);
 
+  // Interactive Photo Transform state (Canva / Figma style direct canvas manipulation)
+  const [photoTransformState, setPhotoTransformState] = useState<{
+    photoId: string;
+    type: 'pan' | 'resize-corner';
+    corner?: 'tl' | 'tr' | 'bl' | 'br';
+    startX: number;
+    startY: number;
+    initX: number;
+    initY: number;
+    initZoom: number;
+    initScale?: number;
+  } | null>(null);
+
   // Dragging text box state
   const [draggingBoxId, setDraggingBoxId] = useState<string | null>(null);
   const dragStartPos = useRef<{ mouseX: number; mouseY: number; boxX: number; boxY: number } | null>(null);
@@ -62,6 +81,56 @@ export const SlideCanvas: React.FC<SlideCanvasProps> = ({
   const canvasRef = useRef<HTMLDivElement>(null);
 
   const campus = CAMPUS_CONFIGS[book.campus] || CAMPUS_CONFIGS.curitiba;
+
+  // Global Mouse Move and Mouse Up for Interactive Photo Transformations
+  useEffect(() => {
+    if (!photoTransformState) return;
+
+    const handleMouseMove = (e: MouseEvent) => {
+      const deltaX = e.clientX - photoTransformState.startX;
+      const deltaY = e.clientY - photoTransformState.startY;
+
+      const currentPhotos = slide.photos || [];
+      const targetPhoto = currentPhotos.find((p) => p.id === photoTransformState.photoId);
+      if (!targetPhoto) return;
+
+      if (photoTransformState.type === 'pan') {
+        const deltaPercentX = Math.round(deltaX * 0.25);
+        const deltaPercentY = Math.round(deltaY * 0.25);
+        const newX = Math.max(-100, Math.min(100, photoTransformState.initX + deltaPercentX));
+        const newY = Math.max(-100, Math.min(100, photoTransformState.initY + deltaPercentY));
+
+        const updated = currentPhotos.map((p) =>
+          p.id === photoTransformState.photoId ? { ...p, x: newX, y: newY } : p
+        );
+        onUpdateSlide({ photos: updated });
+      } else if (photoTransformState.type === 'resize-corner') {
+        let factor = 1;
+        if (photoTransformState.corner === 'br' || photoTransformState.corner === 'tr') {
+          factor = 1 + (deltaX + (photoTransformState.corner === 'br' ? deltaY : -deltaY)) * 0.005;
+        } else {
+          factor = 1 - (deltaX + (photoTransformState.corner === 'bl' ? -deltaY : deltaY)) * 0.005;
+        }
+        const newZoom = Math.max(0.4, Math.min(3.5, Number((photoTransformState.initZoom * factor).toFixed(2))));
+
+        const updated = currentPhotos.map((p) =>
+          p.id === photoTransformState.photoId ? { ...p, zoom: newZoom } : p
+        );
+        onUpdateSlide({ photos: updated });
+      }
+    };
+
+    const handleMouseUp = () => {
+      setPhotoTransformState(null);
+    };
+
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [photoTransformState, slide.photos, onUpdateSlide]);
 
   // Global paste (Ctrl+V) handler
   useEffect(() => {
@@ -157,6 +226,77 @@ export const SlideCanvas: React.FC<SlideCanvasProps> = ({
       return p;
     });
     onUpdateSlide({ photos: updated });
+  };
+
+  const handleUpdatePhoto = (photoId: string, props: Partial<PhotoItem>) => {
+    const currentPhotos = slide.photos ? [...slide.photos] : [];
+    const updated = currentPhotos.map((p) => (p.id === photoId ? { ...p, ...props } : p));
+    onUpdateSlide({ photos: updated });
+  };
+
+  const handleZoomPhoto = (photoId: string, delta: number) => {
+    const currentPhotos = slide.photos ? [...slide.photos] : [];
+    const photo = currentPhotos.find((p) => p.id === photoId);
+    if (!photo) return;
+    const currentZoom = photo.zoom || 1;
+    const newZoom = Math.max(0.4, Math.min(3.5, Number((currentZoom + delta).toFixed(2))));
+    handleUpdatePhoto(photoId, { zoom: newZoom });
+  };
+
+  const handleRotatePhoto = (photoId: string) => {
+    const currentPhotos = slide.photos ? [...slide.photos] : [];
+    const photo = currentPhotos.find((p) => p.id === photoId);
+    if (!photo) return;
+    const currentRotation = photo.rotation || 0;
+    const newRotation = (currentRotation + 90) % 360;
+    handleUpdatePhoto(photoId, { rotation: newRotation });
+  };
+
+  const handleResetPhoto = (photoId: string) => {
+    handleUpdatePhoto(photoId, {
+      zoom: 1,
+      scale: 1,
+      x: 0,
+      y: 0,
+      rotation: 0,
+      cropX: 50,
+      cropY: 50,
+      fit: 'cover',
+      position: 'center',
+      aspectRatio: 'auto',
+    });
+  };
+
+  const handleStartPhotoResize = (e: React.MouseEvent, photo: PhotoItem, corner: 'tl' | 'tr' | 'bl' | 'br') => {
+    e.stopPropagation();
+    e.preventDefault();
+    setActivePhotoId(photo.id);
+    setPhotoTransformState({
+      photoId: photo.id,
+      type: 'resize-corner',
+      corner,
+      startX: e.clientX,
+      startY: e.clientY,
+      initX: photo.x || 0,
+      initY: photo.y || 0,
+      initZoom: photo.zoom || 1,
+      initScale: photo.scale || 1,
+    });
+  };
+
+  const handleStartPhotoPan = (e: React.MouseEvent, photo: PhotoItem) => {
+    e.stopPropagation();
+    setActivePhotoId(photo.id);
+    setPhotoTransformState({
+      photoId: photo.id,
+      type: 'pan',
+      startX: e.clientX,
+      startY: e.clientY,
+      initX: photo.x || 0,
+      initY: photo.y || 0,
+      initZoom: photo.zoom || 1,
+      initScale: photo.scale || 1,
+    });
   };
 
   const handleRegenerateObjective = async () => {
@@ -396,18 +536,23 @@ export const SlideCanvas: React.FC<SlideCanvasProps> = ({
           return (
             <div className="relative flex-1 bg-[#001D3D] text-white flex flex-col justify-between overflow-hidden select-text">
               {/* CAMADA 1 & 2: IMAGEM REPRESENTATIVA INTEGRADA NO LADO DIREITO (SEM BORDA DE CARD) */}
-              <div className="absolute top-0 bottom-0 right-0 w-3/5 sm:w-2/3 overflow-hidden pointer-events-none">
+              <div 
+                onMouseDown={(e) => coverPhoto && handleStartPhotoPan(e, coverPhoto)}
+                className="absolute top-0 bottom-0 right-0 w-3/5 sm:w-2/3 overflow-hidden cursor-grab active:cursor-grabbing select-none"
+                title="Arraste para enquadrar a imagem da capa"
+              >
                 <img
                   src={capaCoverUrl}
                   alt={`Capa de ${book.courseName}`}
-                  className={`w-full h-full object-cover transition-all duration-300 ${
+                  draggable={false}
+                  className={`w-full h-full object-cover transition-transform duration-75 select-none pointer-events-none ${
                     coverPos === 'top' ? 'object-top' :
                     coverPos === 'bottom' ? 'object-bottom' :
                     coverPos === 'left' ? 'object-left' :
                     coverPos === 'right' ? 'object-right' : 'object-center'
                   }`}
                   style={{
-                    transform: `scale(${coverZoom})`,
+                    transform: `scale(${coverZoom}) translate(${coverPhoto?.x || 0}%, ${coverPhoto?.y || 0}%) rotate(${coverPhoto?.rotation || 0}deg)`,
                     transformOrigin: coverPos === 'top' ? 'top center' : coverPos === 'bottom' ? 'bottom center' : 'center center',
                   }}
                 />
@@ -429,10 +574,10 @@ export const SlideCanvas: React.FC<SlideCanvasProps> = ({
               />
 
               {/* BARRA DE FERRAMENTAS FLUTUANTE DE ENQUADRAMENTO DA CAPA */}
-              <div className="no-print absolute top-3 right-3 z-30 flex items-center gap-1.5 bg-black/70 backdrop-blur-md px-3 py-1.5 rounded-lg border border-white/20 text-white text-[11px] shadow-lg">
+              <div className="no-print absolute top-3 right-3 z-30 flex items-center gap-1.5 bg-black/75 backdrop-blur-md px-3 py-1.5 rounded-lg border border-white/20 text-white text-[11px] shadow-lg">
                 <label className="cursor-pointer flex items-center gap-1 hover:text-[#00A3E0] transition-colors font-semibold">
                   <ImageIcon className="w-3.5 h-3.5 text-[#00A3E0]" />
-                  <span>Substituir Imagem</span>
+                  <span>Substituir</span>
                   <input
                     type="file"
                     accept="image/*"
@@ -480,16 +625,34 @@ export const SlideCanvas: React.FC<SlideCanvasProps> = ({
                 </select>
 
                 {/* Zoom */}
-                <select
-                  value={coverZoom}
-                  onChange={(e) => updateCoverProps({ zoom: parseFloat(e.target.value) })}
-                  className="bg-black/40 border border-white/20 rounded px-1.5 py-0.5 text-[10px] text-white focus:outline-hidden"
+                <div className="flex items-center gap-0.5 ml-1">
+                  <button
+                    onClick={() => updateCoverProps({ zoom: Math.max(0.8, Number((coverZoom - 0.1).toFixed(2))) })}
+                    title="Diminuir Zoom"
+                    className="p-0.5 hover:bg-white/20 rounded text-slate-300 hover:text-white"
+                  >
+                    <ZoomOut className="w-3 h-3" />
+                  </button>
+                  <span className="font-mono text-[10px] w-8 text-center text-amber-300 font-bold">
+                    {Math.round(coverZoom * 100)}%
+                  </span>
+                  <button
+                    onClick={() => updateCoverProps({ zoom: Math.min(2.5, Number((coverZoom + 0.1).toFixed(2))) })}
+                    title="Aumentar Zoom"
+                    className="p-0.5 hover:bg-white/20 rounded text-slate-300 hover:text-white"
+                  >
+                    <ZoomIn className="w-3 h-3" />
+                  </button>
+                </div>
+
+                {/* Reset */}
+                <button
+                  onClick={() => updateCoverProps({ zoom: 1, x: 0, y: 0, position: 'center', rotation: 0 })}
+                  title="Redefinir enquadramento"
+                  className="p-1 hover:bg-white/20 rounded text-slate-400 hover:text-white ml-0.5"
                 >
-                  <option value="1" className="text-black">1.0x</option>
-                  <option value="1.15" className="text-black">1.15x</option>
-                  <option value="1.3" className="text-black">1.3x</option>
-                  <option value="1.5" className="text-black">1.5x</option>
-                </select>
+                  <RotateCcw className="w-3 h-3" />
+                </button>
               </div>
 
               {/* POPOVER DA BIBLIOTECA DE IMAGENS DO CURSO */}
@@ -802,7 +965,7 @@ export const SlideCanvas: React.FC<SlideCanvasProps> = ({
                   /* Photos Grid with Reordering & Replacement */
                   <div className="w-full h-full flex flex-col justify-between gap-2">
                     <div
-                      className={`grid gap-2 h-full ${
+                      className={`grid gap-3 h-full ${
                         slide.photoLayout === 'split-50-50' || slide.photos.length === 2
                           ? 'grid-cols-2'
                           : slide.photoLayout === 'grid-3' || slide.photos.length === 3
@@ -815,30 +978,214 @@ export const SlideCanvas: React.FC<SlideCanvasProps> = ({
                         return (
                           <div
                             key={photo.id}
-                            onClick={() => setActivePhotoId(photo.id)}
-                            className={`relative rounded-md overflow-hidden bg-slate-100 flex flex-col justify-between border group transition-all ${
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setActivePhotoId(photo.id);
+                              setSelectedTextBoxId(null);
+                            }}
+                            style={{
+                              aspectRatio: photo.aspectRatio === '16/9' ? '16/9' : photo.aspectRatio === '4/3' ? '4/3' : photo.aspectRatio === '1/1' ? '1/1' : undefined,
+                            }}
+                            className={`relative rounded-lg overflow-visible bg-slate-100 flex flex-col justify-between border transition-all ${
                               isSelected
-                                ? 'border-[#00A3E0] ring-2 ring-[#00A3E0]'
+                                ? 'border-[#00A3E0] ring-2 ring-[#00A3E0] shadow-md z-30'
                                 : 'border-slate-200 hover:border-slate-300'
                             }`}
                           >
-                            <div className="relative w-full h-full min-h-[170px] overflow-hidden bg-slate-900/5">
+                            {/* FLOATING CANVA/FIGMA TOOLBAR (WHEN PHOTO SELECTED) */}
+                            {isSelected && (
+                              <div
+                                onClick={(e) => e.stopPropagation()}
+                                className="no-print absolute -top-11 left-1/2 -translate-x-1/2 z-50 flex items-center gap-1.5 bg-[#001D3D] text-white px-2.5 py-1 rounded-lg shadow-2xl border border-white/20 text-[11px] whitespace-nowrap animate-in fade-in zoom-in-95 duration-150"
+                              >
+                                {/* Direct Pan Button / Indicator */}
+                                <span
+                                  onMouseDown={(e) => handleStartPhotoPan(e, photo)}
+                                  className="flex items-center gap-1 text-[#00A3E0] font-mono cursor-grab active:cursor-grabbing px-1 hover:bg-white/10 rounded transition-colors"
+                                  title="Clique e arraste com o mouse para enquadrar livremente a imagem"
+                                >
+                                  <Move className="w-3.5 h-3.5" />
+                                  <span>Mover</span>
+                                </span>
+                                <span className="text-white/20">|</span>
+
+                                {/* Zoom Controls */}
+                                <div className="flex items-center gap-0.5">
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleZoomPhoto(photo.id, -0.1);
+                                    }}
+                                    title="Diminuir Zoom"
+                                    className="p-1 hover:bg-white/10 rounded text-slate-300 hover:text-white"
+                                  >
+                                    <ZoomOut className="w-3.5 h-3.5" />
+                                  </button>
+                                  <span className="font-mono text-[10px] w-8 text-center text-amber-300 font-bold">
+                                    {Math.round((photo.zoom || 1) * 100)}%
+                                  </span>
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleZoomPhoto(photo.id, 0.1);
+                                    }}
+                                    title="Aumentar Zoom"
+                                    className="p-1 hover:bg-white/10 rounded text-slate-300 hover:text-white"
+                                  >
+                                    <ZoomIn className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
+                                <span className="text-white/20">|</span>
+
+                                {/* Rotate */}
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleRotatePhoto(photo.id);
+                                  }}
+                                  title="Girar 90° no sentido horário"
+                                  className="flex items-center gap-1 p-1 hover:bg-white/10 rounded text-[#00A3E0]"
+                                >
+                                  <RotateCw className="w-3.5 h-3.5" />
+                                  <span className="font-mono text-[10px]">{photo.rotation || 0}°</span>
+                                </button>
+                                <span className="text-white/20">|</span>
+
+                                {/* Aspect Ratio */}
+                                <select
+                                  value={photo.aspectRatio || 'auto'}
+                                  onChange={(e) => {
+                                    e.stopPropagation();
+                                    handleUpdatePhoto(photo.id, { aspectRatio: e.target.value as any });
+                                  }}
+                                  className="bg-black/50 border border-white/20 rounded px-1.5 py-0.5 text-[10px] text-white focus:outline-hidden"
+                                  title="Proporção da imagem (Aspect Ratio)"
+                                >
+                                  <option value="auto" className="text-black">Auto</option>
+                                  <option value="16/9" className="text-black">16:9</option>
+                                  <option value="4/3" className="text-black">4:3</option>
+                                  <option value="1/1" className="text-black">1:1</option>
+                                </select>
+                                <span className="text-white/20">|</span>
+
+                                {/* Fit mode */}
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleToggleFit(photo.id);
+                                  }}
+                                  title="Alternar Preencher (cortar bordas) ou Ajustar (mostrar inteira)"
+                                  className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                                    photo.fit === 'contain' ? 'bg-[#00A3E0] text-slate-900' : 'bg-white/10 text-white'
+                                  }`}
+                                >
+                                  {photo.fit === 'contain' ? 'Ajustado' : 'Preenchido'}
+                                </button>
+                                <span className="text-white/20">|</span>
+
+                                {/* Reset Transform */}
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleResetPhoto(photo.id);
+                                  }}
+                                  title="Redefinir enquadramento e transformações"
+                                  className="p-1 hover:bg-white/10 rounded text-slate-400 hover:text-white"
+                                >
+                                  <RotateCcw className="w-3.5 h-3.5" />
+                                </button>
+                                <span className="text-white/20">|</span>
+
+                                {/* Replace Photo */}
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    replacePhotoIndexRef.current = pIdx;
+                                    fileInputRef.current?.click();
+                                  }}
+                                  title="Substituir foto por upload"
+                                  className="p-1 hover:bg-white/10 rounded text-sky-400 hover:text-white"
+                                >
+                                  <ImageIcon className="w-3.5 h-3.5" />
+                                </button>
+
+                                {/* Delete Photo */}
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleDeletePhoto(photo.id);
+                                  }}
+                                  title="Remover foto do slide"
+                                  className="p-1 hover:bg-red-600 rounded text-red-400 hover:text-white ml-0.5"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            )}
+
+                            {/* 4 FIGMA/CANVA CORNER RESIZE HANDLES */}
+                            {isSelected && (
+                              <>
+                                <div
+                                  onMouseDown={(e) => handleStartPhotoResize(e, photo, 'tl')}
+                                  title="Arraste para redimensionar"
+                                  className="no-print absolute -top-1.5 -left-1.5 w-3 h-3 bg-white border-2 border-[#00A3E0] rounded-[2px] z-40 cursor-nwse-resize shadow-md hover:scale-125 transition-transform"
+                                />
+                                <div
+                                  onMouseDown={(e) => handleStartPhotoResize(e, photo, 'tr')}
+                                  title="Arraste para redimensionar"
+                                  className="no-print absolute -top-1.5 -right-1.5 w-3 h-3 bg-white border-2 border-[#00A3E0] rounded-[2px] z-40 cursor-nesw-resize shadow-md hover:scale-125 transition-transform"
+                                />
+                                <div
+                                  onMouseDown={(e) => handleStartPhotoResize(e, photo, 'bl')}
+                                  title="Arraste para redimensionar"
+                                  className="no-print absolute -bottom-1.5 -left-1.5 w-3 h-3 bg-white border-2 border-[#00A3E0] rounded-[2px] z-40 cursor-nesw-resize shadow-md hover:scale-125 transition-transform"
+                                />
+                                <div
+                                  onMouseDown={(e) => handleStartPhotoResize(e, photo, 'br')}
+                                  title="Arraste para redimensionar"
+                                  className="no-print absolute -bottom-1.5 -right-1.5 w-3 h-3 bg-white border-2 border-[#00A3E0] rounded-[2px] z-40 cursor-nwse-resize shadow-md hover:scale-125 transition-transform"
+                                />
+                              </>
+                            )}
+
+                            {/* Image Canvas Frame with Pan Dragging */}
+                            <div
+                              onMouseDown={(e) => handleStartPhotoPan(e, photo)}
+                              className={`relative w-full h-full min-h-[170px] overflow-hidden bg-slate-900/5 select-none rounded-t-lg ${
+                                isSelected ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer'
+                              }`}
+                            >
                               <img
                                 src={photo.url}
                                 alt={photo.caption || 'Foto'}
-                                className={`w-full h-full ${
+                                draggable={false}
+                                className={`w-full h-full pointer-events-none transition-transform duration-75 select-none ${
                                   photo.fit === 'contain' ? 'object-contain' : 'object-cover'
                                 }`}
+                                style={{
+                                  transform: `scale(${(photo.zoom || 1) * (photo.scale || 1)}) translate(${photo.x || 0}%, ${photo.y || 0}%) rotate(${photo.rotation || 0}deg)`,
+                                  objectPosition: photo.position === 'top' ? 'top center' : photo.position === 'bottom' ? 'bottom center' : photo.position === 'left' ? 'left center' : photo.position === 'right' ? 'right center' : `${photo.cropX ?? 50}% ${photo.cropY ?? 50}%`,
+                                }}
                               />
 
                               {/* Number Badge */}
-                              <div className="absolute top-1.5 left-1.5 bg-black/70 text-white font-mono font-bold text-[9px] px-1.5 py-0.5 rounded z-20">
+                              <div className="absolute top-1.5 left-1.5 bg-black/70 text-white font-mono font-bold text-[9px] px-1.5 py-0.5 rounded z-20 pointer-events-none">
                                 #{pIdx + 1}
                               </div>
 
-                              {/* Action controls on hover */}
+                              {/* Floating status badge when customized */}
+                              {isSelected && ((photo.zoom && photo.zoom !== 1) || (photo.x && photo.x !== 0) || (photo.y && photo.y !== 0) || (photo.rotation && photo.rotation !== 0)) && (
+                                <div className="no-print absolute bottom-1.5 right-1.5 bg-black/75 backdrop-blur-xs text-[#00A3E0] font-mono text-[9px] px-1.5 py-0.5 rounded shadow-xs z-20 pointer-events-none">
+                                  {photo.zoom ? `${Math.round(photo.zoom * 100)}% ` : ''}
+                                  {photo.x ? `X:${photo.x}% ` : ''}
+                                  {photo.y ? `Y:${photo.y}% ` : ''}
+                                  {photo.rotation ? `${photo.rotation}°` : ''}
+                                </div>
+                              )}
+
+                              {/* Reorder controls on hover */}
                               <div className="absolute top-1.5 right-1.5 flex items-center gap-1 z-30 opacity-90 hover:opacity-100">
-                                {/* Move Left */}
                                 {pIdx > 0 && (
                                   <button
                                     onClick={(e) => {
@@ -851,8 +1198,6 @@ export const SlideCanvas: React.FC<SlideCanvasProps> = ({
                                     <ArrowLeft className="w-3 h-3" />
                                   </button>
                                 )}
-
-                                {/* Move Right */}
                                 {pIdx < (slide.photos?.length || 0) - 1 && (
                                   <button
                                     onClick={(e) => {
@@ -865,48 +1210,11 @@ export const SlideCanvas: React.FC<SlideCanvasProps> = ({
                                     <ArrowRight className="w-3 h-3" />
                                   </button>
                                 )}
-
-                                {/* Fit toggle */}
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    handleToggleFit(photo.id);
-                                  }}
-                                  title="Ajustar / Preencher"
-                                  className="px-1.5 py-0.5 text-[9px] font-bold rounded bg-black/60 text-white hover:bg-black/80"
-                                >
-                                  {photo.fit === 'contain' ? 'Ajustado' : 'Preenchido'}
-                                </button>
-
-                                {/* Replace */}
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    replacePhotoIndexRef.current = pIdx;
-                                    fileInputRef.current?.click();
-                                  }}
-                                  title="Substituir foto"
-                                  className="px-1.5 py-0.5 text-[9px] font-bold rounded bg-black/60 text-white hover:bg-black/80"
-                                >
-                                  Trocar
-                                </button>
-
-                                {/* Delete */}
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    handleDeletePhoto(photo.id);
-                                  }}
-                                  title="Remover foto"
-                                  className="p-1 rounded bg-red-600 text-white hover:bg-red-700"
-                                >
-                                  <Trash2 className="w-3 h-3" />
-                                </button>
                               </div>
                             </div>
 
                             {/* Caption input */}
-                            <div className="p-1 bg-white border-t border-slate-100">
+                            <div className="p-1 bg-white border-t border-slate-100 rounded-b-lg">
                               <input
                                 type="text"
                                 value={photo.caption || ''}

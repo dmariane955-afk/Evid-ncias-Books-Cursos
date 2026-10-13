@@ -188,6 +188,10 @@ export const COURSES_BY_AREA: Record<AcademicArea, string[]> = {
 export const INITIAL_ACTIVITIES: ActivityItem[] = [
   {
     id: 'act-sample-1',
+    bookId: 'book-course-eng-soft',
+    campus: 'curitiba',
+    unitId: 'curitiba',
+    courseId: 'course-eng-soft',
     title: 'Ação Prática de Laboratório',
     date: '2026-03-14',
     time: '14:30',
@@ -210,6 +214,10 @@ export const INITIAL_ACTIVITIES: ActivityItem[] = [
   },
   {
     id: 'act-sample-inter-1',
+    bookId: 'book-course-eng-soft',
+    campus: 'curitiba',
+    unitId: 'curitiba',
+    courseId: 'course-eng-soft',
     title: 'Campanha de Arrecadação de Inverno e Solidariedade',
     date: '2026-04-02',
     time: '10:00',
@@ -223,15 +231,19 @@ export const INITIAL_ACTIVITIES: ActivityItem[] = [
         fit: 'cover',
       },
     ],
-    targetCourseIds: ['course-eng-soft', 'course-biomedicina'],
+    targetCourseIds: ['course-eng-soft'],
     primaryCampus: 'curitiba',
     syncedCampuses: ['curitiba'],
-    isShared: true,
+    isShared: false,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   },
   {
     id: 'act-sample-sust-1',
+    bookId: 'book-course-ads-fatec',
+    campus: 'fatec',
+    unitId: 'fatec',
+    courseId: 'course-ads-fatec',
     title: 'Oficina de Práticas Tecnológicas e Descarte Consciente',
     date: '2026-04-18',
     time: '15:00',
@@ -291,7 +303,7 @@ export function createDefaultSlidesForCourse(course: Course, activitiesForCourse
   // Add slides for each activity
   activitiesForCourse.forEach((act, idx) => {
     slides.push({
-      id: `slide-act-${act.id}`,
+      id: `slide-act-${course.id}-${act.id}`,
       activityId: act.id,
       type: 'evidencia',
       title: act.title,
@@ -341,7 +353,11 @@ export function createDefaultSlidesForCourse(course: Course, activitiesForCourse
 
 export function createInitialBooks(courses: Course[], activities: ActivityItem[]): AcademicBook[] {
   return courses.map((course) => {
-    const courseActivities = activities.filter((act) => act.targetCourseIds.includes(course.id));
+    const courseActivities = activities.filter(
+      (act) =>
+        act.bookId === `book-${course.id}` ||
+        (act.courseId === course.id && (act.campus === course.campus || act.primaryCampus === course.campus))
+    );
     const coverImageUrl = course.coverImage || getCourseCoverImage(course.name, course.academicArea);
     return {
       id: `book-${course.id}`,
