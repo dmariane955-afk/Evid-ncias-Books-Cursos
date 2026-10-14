@@ -15,7 +15,7 @@ import { Course, AcademicBook, ActivityItem } from '../types';
 import {
   uploadImageDataUrl,
   isImageDataUrl
-} from './imageStorage';
+} from '../utils/imageStorage';
 
 export interface FirestoreErrorInfo {
   error: string;
