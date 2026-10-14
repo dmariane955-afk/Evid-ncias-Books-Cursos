@@ -81,7 +81,10 @@ export default function App() {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed) && parsed.length > 0) {
           return parsed.map((b: AcademicBook) => {
-            const coverUrl = b.coverImage || getCourseCoverImage(b.courseName, b.academicArea);
+            const coverUrl =
+  b.coverImage ||
+  b.slides?.find((s) => s.type === 'capa')?.photos?.[0]?.url ||
+  getCourseCoverImage(b.courseName, b.academicArea);
             const updatedSlides = b.slides.map((s) => {
               if (s.type === 'capa' && (!s.photos || s.photos.length === 0)) {
                 return {
@@ -1066,7 +1069,7 @@ const handleUpdateActiveSlide = (updated: Partial<SlideData>) => {
     setBooks((prevBooks) => {
       const updated = prevBooks.map((b) => {
         if (b.courseId === courseId) {
-          const updatedSlides = b.slides.map((s) => {
+          const updatedSlides = (b.slides || []).map((s) => {
             if (s.type === 'capa') {
               return {
                 ...s,
