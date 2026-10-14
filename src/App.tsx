@@ -449,6 +449,7 @@ export default function App() {
   // Update current active slide in current book
  
 ```tsx
+```tsx
 const handleUpdateActiveSlide = (updated: Partial<SlideData>) => {
   if (!currentBook || !activeSlide) return;
 
@@ -533,6 +534,7 @@ const handleUpdateActiveSlide = (updated: Partial<SlideData>) => {
     );
   }
 };
+```
 
   // 4. Activity Management with STRICT ISOLATION BETWEEN BOOKS & UNITS
   const handleSaveActivity = (activity: ActivityItem, applyToAllSynced: boolean = true) => {
