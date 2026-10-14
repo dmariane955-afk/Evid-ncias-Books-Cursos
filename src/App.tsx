@@ -121,7 +121,7 @@ export default function App() {
   const [shareToast, setShareToast] = useState<string | null>(null);
 
   const isInitialSyncDone = useRef(false);
-  const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Modals state
   const [isActivityModalOpen, setIsActivityModalOpen] = useState(false);
