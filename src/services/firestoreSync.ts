@@ -241,7 +241,7 @@ async function seedInitialBooks(books: AcademicBook[]) {
 export async function saveBookToFirestore(
   book: AcademicBook
 ): Promise<boolean> {
-const path = `books/${book.id}`;
+  const path = `books/${book.id}`;
 
   try {
     const preparedBook: AcademicBook = {
@@ -249,7 +249,7 @@ const path = `books/${book.id}`;
       slides: [...(book.slides || [])],
     };
 
-    // Converte a capa Base64 em uma URL do Firebase Storage.
+    // Salva a capa no Firebase Storage quando ainda estiver em Base64.
     if (
       preparedBook.coverImage &&
       isImageDataUrl(preparedBook.coverImage)
@@ -259,6 +259,41 @@ const path = `books/${book.id}`;
         `books/${book.id}/cover`
       );
     }
+
+    // Salva as imagens dos slides no Firebase Storage.
+    preparedBook.slides = await Promise.all(
+      preparedBook.slides.map(async (slide) => {
+        const photos = await Promise.all(
+          (slide.photos || []).map(async (photo, index) => {
+            if (!isImageDataUrl(photo.url)) {
+              return photo;
+            }
+
+            const url = await uploadImageDataUrl(
+              photo.url,
+              `books/${book.id}/slides/${slide.id}/photo-${index}`
+            );
+
+            return { ...photo, url };
+          })
+        );
+
+        return { ...slide, photos };
+      })
+    );
+
+    const ref = doc(db, 'books', book.id);
+
+    await setDoc(ref, sanitizeForFirestore(preparedBook), {
+      merge: true,
+    });
+
+    return true;
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, path);
+    return false;
+  }
+}
 
     // Converte imagens dos slides em URLs permanentes.
     preparedBook.slides = await Promise.all(
