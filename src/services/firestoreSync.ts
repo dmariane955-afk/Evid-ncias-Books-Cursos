@@ -244,21 +244,45 @@ export async function saveBookToFirestore(
   const path = `books/${book.id}`;
 
   try {
-    const preparedBook: AcademicBook = {
-      ...book,
-      slides: [...(book.slides || [])],
-    };
 
-    // Salva a capa no Firebase Storage quando ainda estiver em Base64.
-    if (
-      preparedBook.coverImage &&
-      isImageDataUrl(preparedBook.coverImage)
-    ) {
-      preparedBook.coverImage = await uploadImageDataUrl(
-        preparedBook.coverImage,
-        `books/${book.id}/cover`
-      );
-    }
+const preparedBook: AcademicBook = {
+  ...book,
+  slides: await Promise.all(
+    (book.slides || []).map(async (slide) => {
+      if (slide.type !== 'capa') {
+        return { ...slide };
+      }
+
+      const photos = [...(slide.photos || [])];
+
+      if (photos[0]?.url && isImageDataUrl(photos[0].url)) {
+        photos[0] = {
+          ...photos[0],
+          url: await uploadImageDataUrl(
+            photos[0].url,
+            `books/${book.id}/cover`
+          ),
+        };
+      }
+
+      return {
+        ...slide,
+        photos,
+      };
+    })
+  ),
+};
+
+// Também preserva a capa armazenada diretamente no livro.
+if (
+  preparedBook.coverImage &&
+  isImageDataUrl(preparedBook.coverImage)
+) {
+  preparedBook.coverImage = await uploadImageDataUrl(
+    preparedBook.coverImage,
+    `books/${book.id}/cover`
+  );
+}
 
     // Salva as imagens dos slides no Firebase Storage.
     preparedBook.slides = await Promise.all(
