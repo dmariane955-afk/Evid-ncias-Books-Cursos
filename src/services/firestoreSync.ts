@@ -237,7 +237,7 @@ async function seedInitialBooks(books: AcademicBook[]) {
 /**
  * Save / Update a single book to Firestore
  */
-```tsx
+
 export async function saveBookToFirestore(
   book: AcademicBook
 ): Promise<boolean> {
@@ -329,9 +329,6 @@ export async function saveBookToFirestore(
     return false;
   }
 }
-```
-
-
 
 /**
  * Delete a course from Firestore
