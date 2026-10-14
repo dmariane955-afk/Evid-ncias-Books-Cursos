@@ -448,17 +448,20 @@ export default function App() {
   
   // Update current active slide in current book
  
+```tsx
 const handleUpdateActiveSlide = (updated: Partial<SlideData>) => {
   if (!currentBook || !activeSlide) return;
 
   pushHistorySnapshot();
 
-  const updatedSlides = currentBook.slides.map((s) =>
-    s.id === activeSlide.id ? { ...s, ...updated } : s
+  const updatedSlides = currentBook.slides.map((slide) =>
+    slide.id === activeSlide.id
+      ? { ...slide, ...updated }
+      : slide
   );
 
   const editedSlide = updatedSlides.find(
-    (s) => s.id === activeSlide.id
+    (slide) => slide.id === activeSlide.id
   );
 
   const isCoverSlide = editedSlide?.type === 'capa';
@@ -473,10 +476,11 @@ const handleUpdateActiveSlide = (updated: Partial<SlideData>) => {
     updatedAt: new Date().toISOString(),
   };
 
-  // Salva o livro e o slide atualizado.
+  // Salva imediatamente o slide e o livro.
   persistBookUpdate(updatedBook, true);
 
-  // Atualiza também a capa do curso exibida na página inicial.
+  // Atualiza a capa do curso correspondente, sem afetar
+  // outros cursos ou a outra unidade.
   if (editedCoverUrl) {
     setCourses((prevCourses) => {
       const updatedCourses = prevCourses.map((course) =>
@@ -497,7 +501,7 @@ const handleUpdateActiveSlide = (updated: Partial<SlideData>) => {
     });
   }
 
-  // Preserva a atualização de atividades vinculadas.
+  // Mantém a atualização das atividades vinculadas.
   if (activeSlide.activityId) {
     setActivities((prev) =>
       prev.map((act) => {
