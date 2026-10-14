@@ -8,17 +8,14 @@ import {
   writeBatch,
   Unsubscribe
 } from 'firebase/firestore';
+
 import { db } from '../firebase';
 import { Course, AcademicBook, ActivityItem } from '../types';
 
-export enum OperationType {
-  CREATE = 'create',
-  UPDATE = 'update',
-  DELETE = 'delete',
-  LIST = 'list',
-  GET = 'get',
-  WRITE = 'write',
-}
+import {
+  uploadImageDataUrl,
+  isImageDataUrl
+} from './imageStorage';
 
 export interface FirestoreErrorInfo {
   error: string;
@@ -240,11 +237,53 @@ async function seedInitialBooks(books: AcademicBook[]) {
 /**
  * Save / Update a single book to Firestore
  */
-export async function saveBookToFirestore(book: AcademicBook): Promise<boolean> {
+export async function saveBookToFirestore(
+  book: AcademicBook
+): Promise<boolean> {
   const path = `books/${book.id}`;
+
   try {
+    const preparedBook: AcademicBook = { ...book };
+
+    // Salva a capa do livro no Storage, se estiver em Base64.
+    if (
+      preparedBook.coverImage &&
+      isImageDataUrl(preparedBook.coverImage)
+    ) {
+      preparedBook.coverImage = await uploadImageDataUrl(
+        preparedBook.coverImage,
+        `books/${book.id}/cover`
+      );
+    }
+
+    // Salva as imagens de cada slide, preservando suas propriedades.
+    preparedBook.slides = await Promise.all(
+      (preparedBook.slides || []).map(async (slide) => {
+        const photos = await Promise.all(
+          (slide.photos || []).map(async (photo, index) => {
+            if (!isImageDataUrl(photo.url)) {
+              return photo;
+            }
+
+            const url = await uploadImageDataUrl(
+              photo.url,
+              `books/${book.id}/slides/${slide.id}/photo-${index}`
+            );
+
+            return { ...photo, url };
+          })
+        );
+
+        return { ...slide, photos };
+      })
+    );
+
     const ref = doc(db, 'books', book.id);
-    await setDoc(ref, sanitizeForFirestore(book), { merge: true });
+
+    await setDoc(ref, sanitizeForFirestore(preparedBook), {
+      merge: true,
+    });
+
     return true;
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, path);
@@ -270,17 +309,37 @@ export async function deleteBookFromFirestore(bookId: string): Promise<boolean> 
 /**
  * Save / Update a single course to Firestore
  */
-export async function saveCourseToFirestore(course: Course): Promise<boolean> {
+export async function saveCourseToFirestore(
+  course: Course
+): Promise<boolean> {
   const path = `courses/${course.id}`;
+
   try {
+    const preparedCourse: Course = { ...course };
+
+    if (
+      preparedCourse.coverImage &&
+      isImageDataUrl(preparedCourse.coverImage)
+    ) {
+      preparedCourse.coverImage = await uploadImageDataUrl(
+        preparedCourse.coverImage,
+        `courses/${course.id}/cover`
+      );
+    }
+
     const ref = doc(db, 'courses', course.id);
-    await setDoc(ref, sanitizeForFirestore(course), { merge: true });
+
+    await setDoc(ref, sanitizeForFirestore(preparedCourse), {
+      merge: true,
+    });
+
     return true;
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, path);
     return false;
   }
 }
+
 
 /**
  * Delete a course from Firestore
@@ -300,11 +359,36 @@ export async function deleteCourseFromFirestore(courseId: string): Promise<boole
 /**
  * Save / Update an activity to Firestore
  */
-export async function saveActivityToFirestore(activity: ActivityItem): Promise<boolean> {
+export async function saveActivityToFirestore(
+  activity: ActivityItem
+): Promise<boolean> {
   const path = `activities/${activity.id}`;
+
   try {
+    const preparedActivity: ActivityItem = {
+      ...activity,
+      photos: await Promise.all(
+        (activity.photos || []).map(async (photo, index) => {
+          if (!isImageDataUrl(photo.url)) {
+            return photo;
+          }
+
+          const url = await uploadImageDataUrl(
+            photo.url,
+            `activities/${activity.id}/photo-${index}`
+          );
+
+          return { ...photo, url };
+        })
+      ),
+    };
+
     const ref = doc(db, 'activities', activity.id);
-    await setDoc(ref, sanitizeForFirestore(activity), { merge: true });
+
+    await setDoc(ref, sanitizeForFirestore(preparedActivity), {
+      merge: true,
+    });
+
     return true;
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, path);
