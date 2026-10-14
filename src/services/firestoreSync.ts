@@ -241,7 +241,7 @@ async function seedInitialBooks(books: AcademicBook[]) {
 export async function saveBookToFirestore(
   book: AcademicBook
 ): Promise<boolean> {
-  const path = `books/${book.id}`;
+const path = `books/${book.id}`;
 
   try {
     const preparedBook: AcademicBook = {
