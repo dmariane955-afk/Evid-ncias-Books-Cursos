@@ -445,31 +445,54 @@ export default function App() {
   };
 
   // Update current active slide in current book
+  
+  // Update current active slide in current book
   const handleUpdateActiveSlide = (updated: Partial<SlideData>) => {
+    if (!currentBook || !activeSlide) return;
+
     pushHistorySnapshot();
-    const updatedSlides = currentBook.slides.map((s) => (s.id === activeSlide.id ? { ...s, ...updated } : s));
+
+    const updatedSlides = currentBook.slides.map((s) =>
+      s.id === activeSlide.id ? { ...s, ...updated } : s
+    );
+
+    // Keep the Book cover and cover slide synchronized.
+    const editedSlide = updatedSlides.find((s) => s.id === activeSlide.id);
+    const isCoverSlide = editedSlide?.type === 'capa';
+    const editedCoverUrl = isCoverSlide
+      ? editedSlide?.photos?.[0]?.url
+      : undefined;
+
     const updatedBook: AcademicBook = {
       ...currentBook,
+      ...(editedCoverUrl ? { coverImage: editedCoverUrl } : {}),
       slides: updatedSlides,
       updatedAt: new Date().toISOString(),
     };
-    persistBookUpdate(updatedBook, false);
 
-    // If this slide is linked to an activity, update the activity and save it to Firestore
+    persistBookUpdate(updatedBook, true);
+
+    // If this slide is linked to an activity, update the activity.
     if (activeSlide.activityId) {
       setActivities((prev) =>
         prev.map((act) => {
           if (act.id !== activeSlide.activityId) return act;
+
           const updatedAct: ActivityItem = {
             ...act,
             title: updated.title !== undefined ? updated.title : act.title,
             date: updated.date !== undefined ? updated.date : act.date,
             time: updated.time !== undefined ? updated.time : act.time,
-            activityType: updated.activityType !== undefined ? updated.activityType : act.activityType,
-            objective: updated.objective !== undefined ? updated.objective : act.objective,
+            activityType:
+              updated.activityType !== undefined
+                ? updated.activityType
+                : act.activityType,
+            objective:
+              updated.objective !== undefined ? updated.objective : act.objective,
             photos: updated.photos !== undefined ? updated.photos : act.photos,
             updatedAt: new Date().toISOString(),
           };
+
           saveActivityToFirestore(updatedAct);
           return updatedAct;
         })
