@@ -199,10 +199,6 @@ useEffect(() => {
   };
 }, [book.id, slide.id, handleInsertPhoto]);
 
-    window.addEventListener('paste', handlePaste);
-    return () => window.removeEventListener('paste', handlePaste);
-  }, [slide]);
-
   // Insert or Replace photo
   const handleInsertPhoto = (url: string) => {
     const currentPhotos = slide.photos ? [...slide.photos] : [];
