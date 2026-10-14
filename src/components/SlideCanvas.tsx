@@ -520,19 +520,20 @@ export const SlideCanvas: React.FC<SlideCanvasProps> = ({
           const coverPos = coverPhoto?.position || 'center';
           const coverZoom = coverPhoto?.zoom || 1;
 
-          const updateCoverProps = (props: Partial<PhotoItem>) => {
-            const updatedPhoto: PhotoItem = {
-              id: coverPhoto?.id || `cover-photo-${Date.now()}`,
-              url: capaCoverUrl,
-              caption: `Capa Oficial · ${book.courseName}`,
-              fit: 'cover',
-              position: coverPos,
-              zoom: coverZoom,
-              ...props,
-            };
-            onUpdateSlide({ photos: [updatedPhoto] });
-          };
+        const updateCoverProps = (props: Partial<PhotoItem>) => {
+  const updatedPhoto: PhotoItem = {
+    id: coverPhoto?.id || `cover-photo-${Date.now()}`,
+    url: props.url ?? capaCoverUrl,
+    caption: coverPhoto?.caption || `Capa Oficial · ${book.courseName}`,
+    fit: coverPhoto?.fit || 'cover',
+    position: coverPos,
+    zoom: coverZoom,
+    ...coverPhoto,
+    ...props,
+  };
 
+  onUpdateSlide({ photos: [updatedPhoto] });
+};
           return (
             <div className="relative flex-1 bg-[#001D3D] text-white flex flex-col justify-between overflow-hidden select-text">
               {/* CAMADA 1 & 2: IMAGEM REPRESENTATIVA INTEGRADA NO LADO DIREITO (SEM BORDA DE CARD) */}
