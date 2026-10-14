@@ -534,7 +534,6 @@ const handleUpdateActiveSlide = (updated: Partial<SlideData>) => {
     );
   }
 };
-```
 
   // 4. Activity Management with STRICT ISOLATION BETWEEN BOOKS & UNITS
   const handleSaveActivity = (activity: ActivityItem, applyToAllSynced: boolean = true) => {
