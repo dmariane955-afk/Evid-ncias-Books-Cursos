@@ -237,15 +237,19 @@ async function seedInitialBooks(books: AcademicBook[]) {
 /**
  * Save / Update a single book to Firestore
  */
+```tsx
 export async function saveBookToFirestore(
   book: AcademicBook
 ): Promise<boolean> {
   const path = `books/${book.id}`;
 
   try {
-    const preparedBook: AcademicBook = { ...book };
+    const preparedBook: AcademicBook = {
+      ...book,
+      slides: [...(book.slides || [])],
+    };
 
-    // Salva a capa do livro no Storage, se estiver em Base64.
+    // Converte a capa Base64 em uma URL do Firebase Storage.
     if (
       preparedBook.coverImage &&
       isImageDataUrl(preparedBook.coverImage)
@@ -256,9 +260,9 @@ export async function saveBookToFirestore(
       );
     }
 
-    // Salva as imagens de cada slide, preservando suas propriedades.
+    // Converte imagens dos slides em URLs permanentes.
     preparedBook.slides = await Promise.all(
-      (preparedBook.slides || []).map(async (slide) => {
+      preparedBook.slides.map(async (slide) => {
         const photos = await Promise.all(
           (slide.photos || []).map(async (photo, index) => {
             if (!isImageDataUrl(photo.url)) {
@@ -290,55 +294,8 @@ export async function saveBookToFirestore(
     return false;
   }
 }
+```
 
-/**
- * Delete a book from Firestore
- */
-export async function deleteBookFromFirestore(bookId: string): Promise<boolean> {
-  const path = `books/${bookId}`;
-  try {
-    const ref = doc(db, 'books', bookId);
-    await deleteDoc(ref);
-    return true;
-  } catch (error) {
-    handleFirestoreError(error, OperationType.DELETE, path);
-    return false;
-  }
-}
-
-/**
- * Save / Update a single course to Firestore
- */
-export async function saveCourseToFirestore(
-  course: Course
-): Promise<boolean> {
-  const path = `courses/${course.id}`;
-
-  try {
-    const preparedCourse: Course = { ...course };
-
-    if (
-      preparedCourse.coverImage &&
-      isImageDataUrl(preparedCourse.coverImage)
-    ) {
-      preparedCourse.coverImage = await uploadImageDataUrl(
-        preparedCourse.coverImage,
-        `courses/${course.id}/cover`
-      );
-    }
-
-    const ref = doc(db, 'courses', course.id);
-
-    await setDoc(ref, sanitizeForFirestore(preparedCourse), {
-      merge: true,
-    });
-
-    return true;
-  } catch (error) {
-    handleFirestoreError(error, OperationType.WRITE, path);
-    return false;
-  }
-}
 
 
 /**
