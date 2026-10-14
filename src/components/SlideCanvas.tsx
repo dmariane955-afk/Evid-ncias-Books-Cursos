@@ -626,10 +626,22 @@ useEffect(() => {
                       const file = e.target.files?.[0];
                       if (file) {
                         const reader = new FileReader();
-                        reader.onload = (ev) => {
-                          const url = ev.target?.result as string;
-                          if (url) updateCoverProps({ url });
-                        };
+                       reader.onload = async (ev) => {
+  const url = ev.target?.result as string;
+  if (!url) return;
+
+  try {
+    const permanentUrl = await uploadImageDataUrl(
+      url,
+      `books/${book.id}/cover`
+    );
+
+    updateCoverProps({ url: permanentUrl });
+  } catch (error) {
+    console.error('Erro ao salvar a capa:', error);
+    window.alert('Não foi possível salvar a capa no Firebase Storage.');
+  }
+};
                         reader.readAsDataURL(file);
                       }
                     }}
