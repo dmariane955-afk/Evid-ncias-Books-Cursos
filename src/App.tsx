@@ -448,8 +448,7 @@ export default function App() {
   
   // Update current active slide in current book
  
-```tsx
-```tsx
+// Atualiza o slide ativo do livro atual
 const handleUpdateActiveSlide = (updated: Partial<SlideData>) => {
   if (!currentBook || !activeSlide) return;
 
