@@ -33,6 +33,7 @@ import { CAMPUS_CONFIGS, AREA_CONFIGS } from '../data/defaults';
 import { generateActivityObjective } from '../utils/aiObjective';
 import { EstacioLogo } from './EstacioLogo';
 import { getCourseCoverImage, COURSE_COVER_LIBRARY } from '../utils/courseCovers';
+import { uploadImageDataUrl } from '../utils/imageStorage';
 
 interface SlideCanvasProps {
   book: AcademicBook;
@@ -132,29 +133,71 @@ export const SlideCanvas: React.FC<SlideCanvasProps> = ({
     };
   }, [photoTransformState, slide.photos, onUpdateSlide]);
 
-  // Global paste (Ctrl+V) handler
-  useEffect(() => {
-    const handlePaste = (e: ClipboardEvent) => {
-      if (!e.clipboardData) return;
-      const items = e.clipboardData.items;
-      for (let i = 0; i < items.length; i++) {
-        if (items[i].type.indexOf('image') !== -1) {
-          const file = items[i].getAsFile();
-          if (file) {
-            const reader = new FileReader();
-            reader.onload = (event) => {
-              const url = event.target?.result as string;
-              if (url) {
-                handleInsertPhoto(url);
+ ```tsx
+// Global paste (Ctrl+V) handler
+useEffect(() => {
+  const handlePaste = async (e: ClipboardEvent) => {
+    if (!e.clipboardData) return;
+
+    const items = e.clipboardData.items;
+
+    for (let i = 0; i < items.length; i++) {
+      if (items[i].type.indexOf('image') !== -1) {
+        const file = items[i].getAsFile();
+        if (!file) continue;
+
+        e.preventDefault();
+
+        try {
+          if (file.size > 15 * 1024 * 1024) {
+            throw new Error('A imagem deve ter no máximo 15 MB.');
+          }
+
+          const reader = new FileReader();
+
+          const dataUrl: string = await new Promise((resolve, reject) => {
+            reader.onload = () => {
+              if (typeof reader.result === 'string') {
+                resolve(reader.result);
+              } else {
+                reject(new Error('Não foi possível ler a imagem.'));
               }
             };
+
+            reader.onerror = () => {
+              reject(new Error('Erro ao ler a imagem.'));
+            };
+
             reader.readAsDataURL(file);
-            e.preventDefault();
-            break;
-          }
+          });
+
+          const permanentUrl = await uploadImageDataUrl(
+            dataUrl,
+            `books/${book.id}/slides/${slide.id}`
+          );
+
+          handleInsertPhoto(permanentUrl);
+        } catch (error) {
+          console.error('Erro ao colar imagem:', error);
+
+          window.alert(
+            error instanceof Error
+              ? error.message
+              : 'Não foi possível salvar a imagem no Firebase.'
+          );
         }
+
+        break;
       }
-    };
+    }
+  };
+
+  window.addEventListener('paste', handlePaste);
+
+  return () => {
+    window.removeEventListener('paste', handlePaste);
+  };
+}, [book.id, slide.id, handleInsertPhoto]);
 
     window.addEventListener('paste', handlePaste);
     return () => window.removeEventListener('paste', handlePaste);
