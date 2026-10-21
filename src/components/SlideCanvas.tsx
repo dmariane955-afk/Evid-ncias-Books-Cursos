@@ -33,7 +33,8 @@ import { CAMPUS_CONFIGS, AREA_CONFIGS } from '../data/defaults';
 import { generateActivityObjective } from '../utils/aiObjective';
 import { EstacioLogo } from './EstacioLogo';
 import { getCourseCoverImage, COURSE_COVER_LIBRARY } from '../utils/courseCovers';
-import { uploadImageDataUrl } from '../utils/imageStorage';
+import { uploadCoverImageToStorage } from '../services/storageService';
+import { Loader2 } from 'lucide-react';
 
 interface SlideCanvasProps {
   book: AcademicBook;
@@ -59,6 +60,7 @@ export const SlideCanvas: React.FC<SlideCanvasProps> = ({
   const [draggedPhotoIndex, setDraggedPhotoIndex] = useState<number | null>(null);
   const [isDraggingCanvas, setIsDraggingCanvas] = useState(false);
   const [isCoverLibraryOpen, setIsCoverLibraryOpen] = useState(false);
+  const [isUploadingCover, setIsUploadingCover] = useState(false);
 
   // Interactive Photo Transform state (Canva / Figma style direct canvas manipulation)
   const [photoTransformState, setPhotoTransformState] = useState<{
@@ -133,71 +135,33 @@ export const SlideCanvas: React.FC<SlideCanvasProps> = ({
     };
   }, [photoTransformState, slide.photos, onUpdateSlide]);
 
- ```tsx
-// Global paste (Ctrl+V) handler
-useEffect(() => {
-  const handlePaste = async (e: ClipboardEvent) => {
-    if (!e.clipboardData) return;
-
-    const items = e.clipboardData.items;
-
-    for (let i = 0; i < items.length; i++) {
-      if (items[i].type.indexOf('image') !== -1) {
-        const file = items[i].getAsFile();
-        if (!file) continue;
-
-        e.preventDefault();
-
-        try {
-          if (file.size > 15 * 1024 * 1024) {
-            throw new Error('A imagem deve ter no máximo 15 MB.');
-          }
-
-          const reader = new FileReader();
-
-          const dataUrl: string = await new Promise((resolve, reject) => {
-            reader.onload = () => {
-              if (typeof reader.result === 'string') {
-                resolve(reader.result);
-              } else {
-                reject(new Error('Não foi possível ler a imagem.'));
+  // Global paste (Ctrl+V) handler
+  useEffect(() => {
+    const handlePaste = (e: ClipboardEvent) => {
+      if (!e.clipboardData) return;
+      const items = e.clipboardData.items;
+      for (let i = 0; i < items.length; i++) {
+        if (items[i].type.indexOf('image') !== -1) {
+          const file = items[i].getAsFile();
+          if (file) {
+            const reader = new FileReader();
+            reader.onload = (event) => {
+              const url = event.target?.result as string;
+              if (url) {
+                handleInsertPhoto(url);
               }
             };
-
-            reader.onerror = () => {
-              reject(new Error('Erro ao ler a imagem.'));
-            };
-
             reader.readAsDataURL(file);
-          });
-
-          const permanentUrl = await uploadImageDataUrl(
-            dataUrl,
-            `books/${book.id}/slides/${slide.id}`
-          );
-
-          handleInsertPhoto(permanentUrl);
-        } catch (error) {
-          console.error('Erro ao colar imagem:', error);
-
-          window.alert(
-            error instanceof Error
-              ? error.message
-              : 'Não foi possível salvar a imagem no Firebase.'
-          );
+            e.preventDefault();
+            break;
+          }
         }
-
-        break;
       }
-    }
-  };
+    };
 
-  window.addEventListener('paste', handlePaste);
-
-  return () => {
-    window.removeEventListener('paste', handlePaste);
-  };
-}, [book.id, slide.id, handleInsertPhoto]);
+    window.addEventListener('paste', handlePaste);
+    return () => window.removeEventListener('paste', handlePaste);
+  }, [slide]);
 
   // Insert or Replace photo
   const handleInsertPhoto = (url: string) => {
@@ -559,20 +523,19 @@ useEffect(() => {
           const coverPos = coverPhoto?.position || 'center';
           const coverZoom = coverPhoto?.zoom || 1;
 
-        const updateCoverProps = (props: Partial<PhotoItem>) => {
-  const updatedPhoto: PhotoItem = {
-    id: coverPhoto?.id || `cover-photo-${Date.now()}`,
-    url: props.url ?? capaCoverUrl,
-    caption: coverPhoto?.caption || `Capa Oficial · ${book.courseName}`,
-    fit: coverPhoto?.fit || 'cover',
-    position: coverPos,
-    zoom: coverZoom,
-    ...coverPhoto,
-    ...props,
-  };
+          const updateCoverProps = (props: Partial<PhotoItem>) => {
+            const updatedPhoto: PhotoItem = {
+              id: coverPhoto?.id || `cover-photo-${Date.now()}`,
+              url: capaCoverUrl,
+              caption: `Capa Oficial · ${book.courseName}`,
+              fit: 'cover',
+              position: coverPos,
+              zoom: coverZoom,
+              ...props,
+            };
+            onUpdateSlide({ photos: [updatedPhoto] });
+          };
 
-  onUpdateSlide({ photos: [updatedPhoto] });
-};
           return (
             <div className="relative flex-1 bg-[#001D3D] text-white flex flex-col justify-between overflow-hidden select-text">
               {/* CAMADA 1 & 2: IMAGEM REPRESENTATIVA INTEGRADA NO LADO DIREITO (SEM BORDA DE CARD) */}
@@ -616,33 +579,30 @@ useEffect(() => {
               {/* BARRA DE FERRAMENTAS FLUTUANTE DE ENQUADRAMENTO DA CAPA */}
               <div className="no-print absolute top-3 right-3 z-30 flex items-center gap-1.5 bg-black/75 backdrop-blur-md px-3 py-1.5 rounded-lg border border-white/20 text-white text-[11px] shadow-lg">
                 <label className="cursor-pointer flex items-center gap-1 hover:text-[#00A3E0] transition-colors font-semibold">
-                  <ImageIcon className="w-3.5 h-3.5 text-[#00A3E0]" />
-                  <span>Substituir</span>
+                  {isUploadingCover ? (
+                    <RefreshCw className="w-3.5 h-3.5 text-[#00A3E0] animate-spin" />
+                  ) : (
+                    <ImageIcon className="w-3.5 h-3.5 text-[#00A3E0]" />
+                  )}
+                  <span>{isUploadingCover ? 'Enviando...' : 'Substituir'}</span>
                   <input
                     type="file"
                     accept="image/*"
+                    disabled={isUploadingCover}
                     className="hidden"
-                    onChange={(e) => {
+                    onChange={async (e) => {
                       const file = e.target.files?.[0];
                       if (file) {
-                        const reader = new FileReader();
-                       reader.onload = async (ev) => {
-  const url = ev.target?.result as string;
-  if (!url) return;
-
-  try {
-    const permanentUrl = await uploadImageDataUrl(
-      url,
-      `books/${book.id}/cover`
-    );
-
-    updateCoverProps({ url: permanentUrl });
-  } catch (error) {
-    console.error('Erro ao salvar a capa:', error);
-    window.alert('Não foi possível salvar a capa no Firebase Storage.');
-  }
-};
-                        reader.readAsDataURL(file);
+                        try {
+                          setIsUploadingCover(true);
+                          const url = await uploadCoverImageToStorage(file, `book_${book.id}_cover`);
+                          if (url) updateCoverProps({ url });
+                        } catch (err) {
+                          console.error('Falha no upload da capa:', err);
+                        } finally {
+                          setIsUploadingCover(false);
+                          e.target.value = '';
+                        }
                       }
                     }}
                   />
@@ -934,11 +894,11 @@ useEffect(() => {
             </div>
 
             {/* Central Stage: Objetivo / Registro (Left) + Photos Container (Right) */}
-            <div className="flex-1 my-3 flex flex-col md:flex-row gap-4 min-h-0">
-              {/* Left Column: Objetivo da Atividade */}
-              <div className="w-full md:w-5/12 bg-slate-50/90 border border-slate-200 rounded-lg p-3 flex flex-col justify-between">
-                <div>
-                  <div className="flex items-center justify-between mb-1.5">
+            <div className="flex-1 my-2 sm:my-3 flex flex-row gap-3.5 min-h-0">
+              {/* Left Column: Objetivo da Atividade (Proporcional a 42% do slide) */}
+              <div className="w-[42%] bg-slate-50/90 border border-slate-200 rounded-xl p-3 sm:p-3.5 flex flex-col justify-between shadow-2xs">
+                <div className="flex-1 min-h-0 flex flex-col">
+                  <div className="flex items-center justify-between mb-1.5 shrink-0">
                     <span className="text-[10px] uppercase font-bold text-[#004B8D] tracking-wider">
                       Objetivo da Atividade
                     </span>
@@ -954,7 +914,7 @@ useEffect(() => {
                   </div>
 
                   <textarea
-                    rows={6}
+                    rows={5}
                     value={slide.objective || slide.evidenceMeta?.actionsReport || ''}
                     onChange={(e) => {
                       const val = e.target.value;
@@ -966,12 +926,12 @@ useEffect(() => {
                       });
                     }}
                     placeholder="Descreva o objetivo e desenvolvimento da atividade..."
-                    className="w-full bg-transparent text-xs text-slate-800 leading-relaxed focus:outline-hidden resize-none"
+                    className="w-full flex-1 min-h-0 bg-transparent text-xs text-slate-800 leading-relaxed focus:outline-hidden resize-none"
                   />
                 </div>
 
-                <div className="pt-2 border-t border-slate-200 mt-2">
-                  <span className="text-[9px] uppercase font-bold text-slate-400 block">
+                <div className="pt-2 border-t border-slate-200 mt-2 shrink-0">
+                  <span className="text-[9px] uppercase font-bold text-slate-400 block mb-0.5">
                     Observações complementares (opcional):
                   </span>
                   <input
@@ -992,8 +952,8 @@ useEffect(() => {
                 </div>
               </div>
 
-              {/* Right Column: Ordered Photos Container (Reorder, Replace, Delete) */}
-              <div className="w-full md:w-7/12 flex flex-col justify-center min-h-[220px]">
+              {/* Right Column: Ordered Photos Container (58% de largura) */}
+              <div className="w-[58%] flex flex-col justify-between min-h-0 h-full">
                 {(!slide.photos || slide.photos.length === 0) ? (
                   /* Empty state for photo drop */
                   <div
@@ -1001,7 +961,7 @@ useEffect(() => {
                       replacePhotoIndexRef.current = null;
                       fileInputRef.current?.click();
                     }}
-                    className="w-full h-full border-2 border-dashed border-slate-300 hover:border-[#00A3E0] rounded-lg bg-slate-50 flex flex-col items-center justify-center p-6 text-center cursor-pointer transition-colors group"
+                    className="w-full h-full border-2 border-dashed border-slate-300 hover:border-[#00A3E0] rounded-xl bg-slate-50 flex flex-col items-center justify-center p-6 text-center cursor-pointer transition-colors group"
                   >
                     <div className="w-10 h-10 rounded-full bg-white shadow-xs border border-slate-200 flex items-center justify-center mb-2 group-hover:scale-105 transition-transform">
                       <Camera className="w-5 h-5 text-[#00A3E0]" />
@@ -1015,13 +975,13 @@ useEffect(() => {
                   </div>
                 ) : (
                   /* Photos Grid with Reordering & Replacement */
-                  <div className="w-full h-full flex flex-col justify-between gap-2">
+                  <div className="w-full h-full flex flex-col justify-between min-h-0">
                     <div
-                      className={`grid gap-3 h-full ${
+                      className={`grid gap-2 h-full min-h-0 ${
                         slide.photoLayout === 'split-50-50' || slide.photos.length === 2
-                          ? 'grid-cols-2'
-                          : slide.photoLayout === 'grid-3' || slide.photos.length === 3
-                          ? 'grid-cols-3'
+                          ? 'grid-rows-2'
+                          : slide.photoLayout === 'grid-3' || slide.photos.length >= 3
+                          ? 'grid-cols-2 grid-rows-2'
                           : 'grid-cols-1'
                       }`}
                     >
@@ -1316,56 +1276,471 @@ useEffect(() => {
           </div>
         )}
 
-        {/* SLIDE: SUMÁRIO & OUTROS */}
-        {slide.type !== 'capa' && slide.type !== 'evidencia' && (
-          <div className="flex-1 bg-white p-8 flex flex-col justify-between">
+        {/* SLIDE: SUMÁRIO ANALÍTICO (ORGANIZADO EM COLUNAS COM CARDS NUMERADOS) */}
+        {slide.type === 'sumario' && (
+          <div className="flex-1 bg-white p-5 sm:p-7 flex flex-col justify-between select-text">
             <div>
-              <div className="text-xs text-[#00A3E0] font-bold tracking-wider uppercase mb-1">
-                {book.courseName} · {slide.type.toUpperCase()}
+              <div className="text-[11px] text-[#00A3E0] font-bold tracking-wider uppercase mb-1">
+                {book.courseName} · SUMÁRIO ANALÍTICO EXECUTIVO
               </div>
               <input
                 type="text"
                 value={slide.title}
                 onChange={(e) => onUpdateSlide({ title: e.target.value })}
-                className="w-full bg-transparent font-bold text-2xl text-[#001D3D] border-b border-slate-200 pb-2 focus:outline-hidden"
+                className="w-full bg-transparent font-bold text-xl sm:text-2xl text-[#001D3D] focus:outline-hidden"
+                placeholder="Sumário das Atividades..."
               />
+              <div className="text-xs text-slate-500 mt-1 border-b border-slate-200 pb-2">
+                Estrutura de apresentação e índice analítico do período acadêmico:
+              </div>
             </div>
 
-            <div className="my-auto space-y-4">
-              <textarea
-                rows={4}
-                value={slide.customText1 || ''}
-                onChange={(e) => onUpdateSlide({ customText1: e.target.value })}
-                placeholder="Texto explicativo ou tópicos do Book..."
-                className="w-full bg-transparent text-sm text-slate-800 leading-relaxed focus:outline-hidden resize-none"
-              />
+            <div className="grid grid-cols-2 gap-2.5 my-auto max-h-[310px] overflow-y-auto pr-1">
+              {book.slides
+                .filter((s) => s.type !== 'capa')
+                .map((topic) => (
+                  <div
+                    key={topic.id}
+                    className="flex items-center gap-2.5 p-2 rounded-lg bg-slate-50 border border-slate-200 hover:border-[#00A3E0] hover:bg-sky-50/40 transition-colors shadow-2xs"
+                  >
+                    <span className="w-6 h-6 rounded bg-[#E0F2FE] border border-[#00A3E0]/40 text-[#004B8D] font-mono font-bold text-xs flex items-center justify-center shrink-0">
+                      {topic.order < 10 ? `0${topic.order}` : topic.order}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <div className="text-xs font-bold text-slate-900 truncate">
+                        {topic.title}
+                      </div>
+                      <div className="text-[10px] text-slate-500 truncate flex items-center gap-1.5">
+                        <span className="capitalize">{topic.type}</span>
+                        {topic.date && (
+                          <>
+                            <span>·</span>
+                            <span>{topic.date}</span>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                ))}
             </div>
 
-            {/* Slide footer - Totalmente Editável */}
-            <div className="pt-2 border-t border-slate-200 flex items-center justify-between text-xs text-slate-500 gap-3">
-              <div className="flex items-center gap-1.5 flex-1 min-w-0">
+            {/* Slide footer */}
+            <div className="pt-2 border-t border-slate-200 flex items-center justify-between text-[11px] text-slate-500 gap-3">
+              <input
+                type="text"
+                value={slide.footerLeftText !== undefined ? slide.footerLeftText : `${campus.fullName} · ${book.courseName}`}
+                onChange={(e) => onUpdateSlide({ footerLeftText: e.target.value })}
+                className="bg-transparent font-medium text-slate-700 hover:bg-slate-100/70 focus:bg-white focus:ring-1 focus:ring-[#00A3E0] rounded px-1.5 py-0.5 border-b border-transparent hover:border-slate-300 focus:outline-hidden transition-colors truncate text-[11px]"
+              />
+              <input
+                type="text"
+                value={slide.footerRightText !== undefined ? slide.footerRightText : `Slide ${slideIndex} de ${totalSlides}`}
+                onChange={(e) => onUpdateSlide({ footerRightText: e.target.value })}
+                className="bg-transparent font-mono text-slate-500 text-right hover:bg-slate-100/70 focus:bg-white focus:ring-1 focus:ring-[#00A3E0] rounded px-1.5 py-0.5 border-b border-transparent hover:border-slate-300 focus:outline-hidden transition-colors w-28 text-[11px]"
+              />
+            </div>
+          </div>
+        )}
+
+        {/* SLIDE: APRESENTAÇÃO & CONTEXTUALIZAÇÃO (2 CARDS VISUAIS LADO A LADO IDÊNTICOS AO PPTX) */}
+        {slide.type === 'apresentacao' && (
+          <div className="flex-1 bg-white p-5 sm:p-7 flex flex-col justify-between select-text">
+            <div>
+              <div className="text-[11px] text-[#00A3E0] font-bold tracking-wider uppercase mb-1">
+                {book.courseName} · APRESENTAÇÃO & CONTEXTUALIZAÇÃO
+              </div>
+              <input
+                type="text"
+                value={slide.title}
+                onChange={(e) => onUpdateSlide({ title: e.target.value })}
+                className="w-full bg-transparent font-bold text-xl sm:text-2xl text-[#001D3D] focus:outline-hidden"
+                placeholder="Apresentação do Curso..."
+              />
+              <div className="text-xs text-slate-500 mt-1 border-b border-slate-200 pb-2">
+                Visão estratégica, objetivos pedagógicos e metodologias ativas do curso:
+              </div>
+            </div>
+
+            <div className="my-auto grid grid-cols-2 gap-4">
+              {/* Card 1: Contexto & Proposta Pedagógica */}
+              <div className="rounded-xl border border-slate-200 bg-slate-50/90 overflow-hidden shadow-2xs flex flex-col">
+                <div className="bg-[#E0F2FE] border-b border-slate-200 px-3.5 py-2 flex items-center justify-between">
+                  <span className="text-xs font-bold text-[#004B8D] uppercase tracking-wide">
+                    01. Contexto & Proposta Pedagógica
+                  </span>
+                </div>
+                <div className="p-3.5 flex-1">
+                  <textarea
+                    rows={6}
+                    value={
+                      slide.customText1 !== undefined
+                        ? slide.customText1
+                        : 'O presente Book de Evidências Acadêmicas consolida as atividades práticas, laboratoriais, projetos de extensão e intervenções interdisciplinares desenvolvidas ao longo do período letivo, evidenciando o compromisso com a formação profissional de excelência.'
+                    }
+                    onChange={(e) => onUpdateSlide({ customText1: e.target.value })}
+                    placeholder="Descreva a fundamentação pedagógica, objetivos e missão formativa da unidade..."
+                    className="w-full bg-transparent text-xs text-slate-800 leading-relaxed focus:outline-hidden resize-none"
+                  />
+                </div>
+              </div>
+
+              {/* Card 2: Metodologia Ativa & Experimentação */}
+              <div className="rounded-xl border border-slate-200 bg-slate-50/90 overflow-hidden shadow-2xs flex flex-col">
+                <div className="bg-[#E0F2FE] border-b border-slate-200 px-3.5 py-2 flex items-center justify-between">
+                  <span className="text-xs font-bold text-[#004B8D] uppercase tracking-wide">
+                    02. Metodologia Ativa & Experimentação
+                  </span>
+                </div>
+                <div className="p-3.5 flex-1">
+                  <textarea
+                    rows={6}
+                    value={
+                      slide.customText2 !== undefined
+                        ? slide.customText2
+                        : 'A metodologia ativa adotada coloca o acadêmico como protagonista do processo de construção do conhecimento, transformando laboratórios e espaços práticos em polos vivos de cocriação, experimentação assistida e resolução ética de problemas reais.'
+                    }
+                    onChange={(e) => onUpdateSlide({ customText2: e.target.value })}
+                    placeholder="Descreva como os estudantes vivenciam as práticas laboratoriais, visitas técnicas e dinâmicas ativas..."
+                    className="w-full bg-transparent text-xs text-slate-800 leading-relaxed focus:outline-hidden resize-none"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Slide footer */}
+            <div className="pt-2 border-t border-slate-200 flex items-center justify-between text-[11px] text-slate-500 gap-3">
+              <input
+                type="text"
+                value={slide.footerLeftText !== undefined ? slide.footerLeftText : `${campus.fullName} · ${book.courseName}`}
+                onChange={(e) => onUpdateSlide({ footerLeftText: e.target.value })}
+                className="bg-transparent font-medium text-slate-700 hover:bg-slate-100/70 focus:bg-white focus:ring-1 focus:ring-[#00A3E0] rounded px-1.5 py-0.5 border-b border-transparent hover:border-slate-300 focus:outline-hidden transition-colors truncate text-[11px]"
+              />
+              <input
+                type="text"
+                value={slide.footerRightText !== undefined ? slide.footerRightText : `Slide ${slideIndex} de ${totalSlides}`}
+                onChange={(e) => onUpdateSlide({ footerRightText: e.target.value })}
+                className="bg-transparent font-mono text-slate-500 text-right hover:bg-slate-100/70 focus:bg-white focus:ring-1 focus:ring-[#00A3E0] rounded px-1.5 py-0.5 border-b border-transparent hover:border-slate-300 focus:outline-hidden transition-colors w-28 text-[11px]"
+              />
+            </div>
+          </div>
+        )}
+
+        {/* SLIDE: DIRETRIZES CURRICULARES & MEC (CARDS ESTRUTURADOS COM TARJA CIANO) */}
+        {slide.type === 'diretrizes' && (
+          <div className="flex-1 bg-white p-5 sm:p-7 flex flex-col justify-between select-text">
+            <div>
+              <div className="text-[11px] text-[#00A3E0] font-bold tracking-wider uppercase mb-1">
+                {book.courseName} · CONFORMIDADE REGULATÓRIA MEC
+              </div>
+              <input
+                type="text"
+                value={slide.title}
+                onChange={(e) => onUpdateSlide({ title: e.target.value })}
+                className="w-full bg-transparent font-bold text-xl sm:text-2xl text-[#001D3D] focus:outline-hidden"
+                placeholder="Diretrizes Curriculares Nacionais..."
+              />
+              <div className="text-xs text-slate-500 mt-1 border-b border-slate-200 pb-2">
+                Alinhamento pedagógico às Diretrizes Curriculares Nacionais e aos Padrões de Qualidade do MEC:
+              </div>
+            </div>
+
+            <div className="my-auto space-y-2.5 max-h-[300px] overflow-y-auto pr-1">
+              {(slide.competencies || [
+                {
+                  id: 'comp-1',
+                  code: 'DCN-01',
+                  title: 'Domínio Técnico, Científico e Tecnológico',
+                  description: 'Capacidade de diagnosticar, analisar e conceber soluções profissionais pautadas em métodos científicos rigorosos e no domínio das tecnologias emergentes.',
+                  mecStandard: 'DCNs MEC · Resolução CNE/CES',
+                },
+                {
+                  id: 'comp-2',
+                  code: 'DCN-02',
+                  title: 'Prática Laboratorial & Experimentação Supervisionada',
+                  description: 'Vivência prática em ambientes simulados, ateliês e laboratórios com instrumental técnico adequado à futura atuação mercadológica e comunitária.',
+                  mecStandard: 'Instrumento de Avaliação de Cursos de Graduação MEC',
+                },
+                {
+                  id: 'comp-3',
+                  code: 'DCN-03',
+                  title: 'Responsabilidade Social, Ética e Sustentabilidade',
+                  description: 'Engajamento em ações sociais, cidadãs e de preservação ambiental articuladas às demandas contemporâneas da sociedade e das comunidades locais.',
+                  mecStandard: 'Diretrizes Curriculares Nacionais de Extensão e Cidadania',
+                },
+              ]).map((comp, cIdx) => (
+                <div
+                  key={comp.id || cIdx}
+                  className="rounded-lg border border-slate-200 bg-slate-50/90 overflow-hidden flex items-stretch shadow-2xs"
+                >
+                  <div className="w-1.5 bg-[#00A3E0] shrink-0" />
+                  <div className="p-3 flex-1 min-w-0">
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="px-1.5 py-0.5 rounded bg-sky-100 text-[#004B8D] font-mono font-bold text-[10px]">
+                        {comp.code}
+                      </span>
+                      <span className="font-bold text-xs text-slate-900 truncate">
+                        {comp.title}
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-slate-700 leading-relaxed">
+                      {comp.description}
+                    </p>
+                    <span className="text-[9.5px] text-slate-400 italic block mt-1">
+                      Referência Normativa: {comp.mecStandard}
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* Slide footer */}
+            <div className="pt-2 border-t border-slate-200 flex items-center justify-between text-[11px] text-slate-500 gap-3">
+              <input
+                type="text"
+                value={slide.footerLeftText !== undefined ? slide.footerLeftText : `${campus.fullName} · ${book.courseName}`}
+                onChange={(e) => onUpdateSlide({ footerLeftText: e.target.value })}
+                className="bg-transparent font-medium text-slate-700 hover:bg-slate-100/70 focus:bg-white focus:ring-1 focus:ring-[#00A3E0] rounded px-1.5 py-0.5 border-b border-transparent hover:border-slate-300 focus:outline-hidden transition-colors truncate text-[11px]"
+              />
+              <input
+                type="text"
+                value={slide.footerRightText !== undefined ? slide.footerRightText : `Slide ${slideIndex} de ${totalSlides}`}
+                onChange={(e) => onUpdateSlide({ footerRightText: e.target.value })}
+                className="bg-transparent font-mono text-slate-500 text-right hover:bg-slate-100/70 focus:bg-white focus:ring-1 focus:ring-[#00A3E0] rounded px-1.5 py-0.5 border-b border-transparent hover:border-slate-300 focus:outline-hidden transition-colors w-28 text-[11px]"
+              />
+            </div>
+          </div>
+        )}
+
+        {/* SLIDE: EQUIPE DOCENTE & COORDENAÇÃO (CARDS EM GRADE 2 COLUNAS IDÊNTICO AO PPTX) */}
+        {slide.type === 'equipe' && (
+          <div className="flex-1 bg-white p-5 sm:p-7 flex flex-col justify-between select-text">
+            <div>
+              <div className="text-[11px] text-[#00A3E0] font-bold tracking-wider uppercase mb-1">
+                {book.courseName} · CORPO DOCENTE & COORDENAÇÃO
+              </div>
+              <input
+                type="text"
+                value={slide.title}
+                onChange={(e) => onUpdateSlide({ title: e.target.value })}
+                className="w-full bg-transparent font-bold text-xl sm:text-2xl text-[#001D3D] focus:outline-hidden"
+                placeholder="Equipe Docente e Coordenação..."
+              />
+              <div className="text-xs text-slate-500 mt-1 border-b border-slate-200 pb-2">
+                Corpo docente qualificado responsável pela condução das unidades curriculares e atividades do período:
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3.5 my-auto max-h-[300px] overflow-y-auto pr-1">
+              {(slide.facultyList || [
+                {
+                  id: 'fac-coord',
+                  name: book.coordinator || 'Coordenação de Curso',
+                  role: 'Coordenador(a) do Curso',
+                  degree: 'Mestre / Doutor em Área Conexa',
+                  discipline: 'Gestão Pedagógica & Atividades Integradas',
+                },
+                {
+                  id: 'fac-1',
+                  name: 'Prof. Orientador Titular',
+                  role: 'Docente Responsável',
+                  degree: 'Mestre em Ciências',
+                  discipline: 'Práticas Laboratoriais & Metodologias',
+                },
+                {
+                  id: 'fac-2',
+                  name: 'Prof. Supervisor Prático',
+                  role: 'Docente Especialista',
+                  degree: 'Especialista / Mestre',
+                  discipline: 'Projetos Integradores & Extensão',
+                },
+                {
+                  id: 'fac-3',
+                  name: 'Corpo Técnico Laboratorial',
+                  role: 'Apoio às Práticas',
+                  degree: 'Graduação / Tecnólogo',
+                  discipline: 'Infraestrutura e Segurança de Laboratório',
+                },
+              ]).map((fac, fIdx) => (
+                <div
+                  key={fac.id || fIdx}
+                  className="rounded-xl border border-slate-200 bg-slate-50/90 overflow-hidden shadow-2xs flex flex-col justify-between"
+                >
+                  <div className="h-1 bg-[#004B8D] w-full" />
+                  <div className="p-3 space-y-0.5">
+                    <span className="font-bold text-xs text-[#001D3D] block truncate">
+                      {fac.name}
+                    </span>
+                    <span className="text-[10px] font-bold text-[#00A3E0] uppercase tracking-wide block truncate">
+                      {fac.role}
+                    </span>
+                    <span className="text-[10.5px] text-slate-700 block truncate">
+                      Titulação: {fac.degree}
+                    </span>
+                    <span className="text-[10px] text-slate-500 block truncate">
+                      Disciplina/Atuação: {fac.discipline}
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* Slide footer */}
+            <div className="pt-2 border-t border-slate-200 flex items-center justify-between text-[11px] text-slate-500 gap-3">
+              <input
+                type="text"
+                value={slide.footerLeftText !== undefined ? slide.footerLeftText : `${campus.fullName} · ${book.courseName}`}
+                onChange={(e) => onUpdateSlide({ footerLeftText: e.target.value })}
+                className="bg-transparent font-medium text-slate-700 hover:bg-slate-100/70 focus:bg-white focus:ring-1 focus:ring-[#00A3E0] rounded px-1.5 py-0.5 border-b border-transparent hover:border-slate-300 focus:outline-hidden transition-colors truncate text-[11px]"
+              />
+              <input
+                type="text"
+                value={slide.footerRightText !== undefined ? slide.footerRightText : `Slide ${slideIndex} de ${totalSlides}`}
+                onChange={(e) => onUpdateSlide({ footerRightText: e.target.value })}
+                className="bg-transparent font-mono text-slate-500 text-right hover:bg-slate-100/70 focus:bg-white focus:ring-1 focus:ring-[#00A3E0] rounded px-1.5 py-0.5 border-b border-transparent hover:border-slate-300 focus:outline-hidden transition-colors w-28 text-[11px]"
+              />
+            </div>
+          </div>
+        )}
+
+        {/* SLIDE: INFORMAÇÕES INSTITUCIONAIS & CONTATOS (4 CARDS ESTRUTURADOS) */}
+        {slide.type === 'contatos' && (
+          <div className="flex-1 bg-white p-5 sm:p-7 flex flex-col justify-between select-text">
+            <div>
+              <div className="text-[11px] text-[#00A3E0] font-bold tracking-wider uppercase mb-1">
+                {book.courseName} · ENCERRAMENTO & CANAIS INSTITUCIONAIS
+              </div>
+              <input
+                type="text"
+                value={slide.title}
+                onChange={(e) => onUpdateSlide({ title: e.target.value })}
+                className="w-full bg-transparent font-bold text-xl sm:text-2xl text-[#001D3D] focus:outline-hidden"
+                placeholder="Informações Institucionais..."
+              />
+              <div className="text-xs text-slate-500 mt-1 border-b border-slate-200 pb-2">
+                Atendimento, coordenação acadêmica e canais oficiais de comunicação:
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3.5 my-auto">
+              {/* Card 1: Campus & Endereço */}
+              <div className="p-3.5 rounded-xl border border-slate-200 bg-slate-50/90 shadow-2xs space-y-1">
+                <span className="text-[10px] uppercase font-bold text-[#004B8D] tracking-wider block">
+                  Campus & Endereço Oficial
+                </span>
+                <span className="text-xs font-bold text-slate-900 block">
+                  {campus.fullName}
+                </span>
+                <span className="text-[11px] text-slate-600 block">
+                  {campus.address}
+                </span>
+              </div>
+
+              {/* Card 2: E-mail da Coordenação */}
+              <div className="p-3.5 rounded-xl border border-slate-200 bg-slate-50/90 shadow-2xs space-y-1">
+                <span className="text-[10px] uppercase font-bold text-[#004B8D] tracking-wider block">
+                  E-mail Institucional da Coordenação
+                </span>
+                <span className="text-xs font-bold text-[#004B8D] block font-mono">
+                  {slide.contacts?.email || 'coordenacao.academica@estacio.br'}
+                </span>
+                <span className="text-[11px] text-slate-500 block">
+                  Canal para envio de relatórios e documentação complementar
+                </span>
+              </div>
+
+              {/* Card 3: Central de Atendimento */}
+              <div className="p-3.5 rounded-xl border border-slate-200 bg-slate-50/90 shadow-2xs space-y-1">
+                <span className="text-[10px] uppercase font-bold text-[#004B8D] tracking-wider block">
+                  Telefone & Central de Atendimento
+                </span>
+                <span className="text-xs font-bold text-slate-900 block font-mono">
+                  {slide.contacts?.phone || '(41) 3310-7000'}
+                </span>
+                <span className="text-[11px] text-slate-500 block">
+                  Atendimento direto a docentes, discentes e comunidade
+                </span>
+              </div>
+
+              {/* Card 4: Horário de Funcionamento */}
+              <div className="p-3.5 rounded-xl border border-slate-200 bg-slate-50/90 shadow-2xs space-y-1">
+                <span className="text-[10px] uppercase font-bold text-[#004B8D] tracking-wider block">
+                  Horário de Funcionamento Acadêmico
+                </span>
+                <span className="text-xs font-bold text-slate-900 block">
+                  {slide.contacts?.serviceHours || 'Segunda a Sexta-feira: 08h00 às 21h30'}
+                </span>
+                <span className="text-[11px] text-slate-500 block">
+                  Período letivo oficial · Ano 2026
+                </span>
+              </div>
+            </div>
+
+            {/* Slide footer */}
+            <div className="pt-2 border-t border-slate-200 flex items-center justify-between text-[11px] text-slate-500 gap-3">
+              <input
+                type="text"
+                value={slide.footerLeftText !== undefined ? slide.footerLeftText : `${campus.fullName} · ${book.courseName}`}
+                onChange={(e) => onUpdateSlide({ footerLeftText: e.target.value })}
+                className="bg-transparent font-medium text-slate-700 hover:bg-slate-100/70 focus:bg-white focus:ring-1 focus:ring-[#00A3E0] rounded px-1.5 py-0.5 border-b border-transparent hover:border-slate-300 focus:outline-hidden transition-colors truncate text-[11px]"
+              />
+              <input
+                type="text"
+                value={slide.footerRightText !== undefined ? slide.footerRightText : `Slide ${slideIndex} de ${totalSlides}`}
+                onChange={(e) => onUpdateSlide({ footerRightText: e.target.value })}
+                className="bg-transparent font-mono text-slate-500 text-right hover:bg-slate-100/70 focus:bg-white focus:ring-1 focus:ring-[#00A3E0] rounded px-1.5 py-0.5 border-b border-transparent hover:border-slate-300 focus:outline-hidden transition-colors w-28 text-[11px]"
+              />
+            </div>
+          </div>
+        )}
+
+        {/* SLIDE: OUTROS TIPOS / PERSONALIZADOS */}
+        {slide.type !== 'capa' &&
+          slide.type !== 'evidencia' &&
+          slide.type !== 'sumario' &&
+          slide.type !== 'apresentacao' &&
+          slide.type !== 'diretrizes' &&
+          slide.type !== 'equipe' &&
+          slide.type !== 'contatos' && (
+            <div className="flex-1 bg-white p-5 sm:p-7 flex flex-col justify-between select-text">
+              <div>
+                <div className="text-[11px] text-[#00A3E0] font-bold tracking-wider uppercase mb-1">
+                  {book.courseName} · {slide.type.toUpperCase()}
+                </div>
+                <input
+                  type="text"
+                  value={slide.title}
+                  onChange={(e) => onUpdateSlide({ title: e.target.value })}
+                  className="w-full bg-transparent font-bold text-xl sm:text-2xl text-[#001D3D] border-b border-slate-200 pb-2 focus:outline-hidden"
+                />
+              </div>
+
+              <div className="my-auto space-y-3 p-4 bg-slate-50/90 border border-slate-200 rounded-xl shadow-2xs">
+                <textarea
+                  rows={5}
+                  value={slide.customText1 || ''}
+                  onChange={(e) => onUpdateSlide({ customText1: e.target.value })}
+                  placeholder="Texto explicativo ou registro de evidências deste slide..."
+                  className="w-full bg-transparent text-xs text-slate-800 leading-relaxed focus:outline-hidden resize-none"
+                />
+              </div>
+
+              {/* Slide footer */}
+              <div className="pt-2 border-t border-slate-200 flex items-center justify-between text-[11px] text-slate-500 gap-3">
                 <input
                   type="text"
                   value={slide.footerLeftText !== undefined ? slide.footerLeftText : `${campus.fullName} · ${book.courseName}`}
                   onChange={(e) => onUpdateSlide({ footerLeftText: e.target.value })}
-                  placeholder="Instituição / Campus no rodapé..."
-                  className="bg-transparent font-medium text-slate-700 hover:bg-slate-100/70 focus:bg-white focus:ring-1 focus:ring-[#00A3E0] rounded px-1.5 py-0.5 w-full border-b border-transparent hover:border-slate-300 focus:outline-hidden transition-colors truncate text-xs"
-                  title="Clique para editar as informações do rodapé"
+                  className="bg-transparent font-medium text-slate-700 hover:bg-slate-100/70 focus:bg-white focus:ring-1 focus:ring-[#00A3E0] rounded px-1.5 py-0.5 border-b border-transparent hover:border-slate-300 focus:outline-hidden transition-colors truncate text-[11px]"
                 />
-              </div>
-              <div className="flex items-center gap-1 shrink-0">
                 <input
                   type="text"
                   value={slide.footerRightText !== undefined ? slide.footerRightText : `Slide ${slideIndex} de ${totalSlides}`}
                   onChange={(e) => onUpdateSlide({ footerRightText: e.target.value })}
-                  placeholder={`Slide ${slideIndex} de ${totalSlides}`}
-                  className="bg-transparent font-mono text-slate-500 text-right hover:bg-slate-100/70 focus:bg-white focus:ring-1 focus:ring-[#00A3E0] rounded px-1.5 py-0.5 border-b border-transparent hover:border-slate-300 focus:outline-hidden transition-colors w-28 text-xs"
-                  title="Clique para editar a numeração ou anotação do rodapé"
+                  className="bg-transparent font-mono text-slate-500 text-right hover:bg-slate-100/70 focus:bg-white focus:ring-1 focus:ring-[#00A3E0] rounded px-1.5 py-0.5 border-b border-transparent hover:border-slate-300 focus:outline-hidden transition-colors w-28 text-[11px]"
                 />
               </div>
             </div>
-          </div>
-        )}
+          )}
 
         {/* CUSTOM FREE TEXT BOXES (POWERPOINT STYLE MOVABLE & RESIZABLE) */}
         {(slide.customTextBoxes || []).map((box) => {

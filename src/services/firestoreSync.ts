@@ -8,14 +8,17 @@ import {
   writeBatch,
   Unsubscribe
 } from 'firebase/firestore';
-
 import { db } from '../firebase';
 import { Course, AcademicBook, ActivityItem } from '../types';
 
-import {
-  uploadImageDataUrl,
-  isImageDataUrl
-} from '../utils/imageStorage';
+export enum OperationType {
+  CREATE = 'create',
+  UPDATE = 'update',
+  DELETE = 'delete',
+  LIST = 'list',
+  GET = 'get',
+  WRITE = 'write',
+}
 
 export interface FirestoreErrorInfo {
   error: string;
@@ -237,81 +240,11 @@ async function seedInitialBooks(books: AcademicBook[]) {
 /**
  * Save / Update a single book to Firestore
  */
-
-export async function saveBookToFirestore(
-  book: AcademicBook
-): Promise<boolean> {
+export async function saveBookToFirestore(book: AcademicBook): Promise<boolean> {
   const path = `books/${book.id}`;
-
   try {
-
-const preparedBook: AcademicBook = {
-  ...book,
-  slides: await Promise.all(
-    (book.slides || []).map(async (slide) => {
-      if (slide.type !== 'capa') {
-        return { ...slide };
-      }
-
-      const photos = [...(slide.photos || [])];
-
-      if (photos[0]?.url && isImageDataUrl(photos[0].url)) {
-        photos[0] = {
-          ...photos[0],
-          url: await uploadImageDataUrl(
-            photos[0].url,
-            `books/${book.id}/cover`
-          ),
-        };
-      }
-
-      return {
-        ...slide,
-        photos,
-      };
-    })
-  ),
-};
-
-// Também preserva a capa armazenada diretamente no livro.
-if (
-  preparedBook.coverImage &&
-  isImageDataUrl(preparedBook.coverImage)
-) {
-  preparedBook.coverImage = await uploadImageDataUrl(
-    preparedBook.coverImage,
-    `books/${book.id}/cover`
-  );
-}
-
-    // Salva as imagens dos slides no Firebase Storage.
-    preparedBook.slides = await Promise.all(
-      preparedBook.slides.map(async (slide) => {
-        const photos = await Promise.all(
-          (slide.photos || []).map(async (photo, index) => {
-            if (!isImageDataUrl(photo.url)) {
-              return photo;
-            }
-
-            const url = await uploadImageDataUrl(
-              photo.url,
-              `books/${book.id}/slides/${slide.id}/photo-${index}`
-            );
-
-            return { ...photo, url };
-          })
-        );
-
-        return { ...slide, photos };
-      })
-    );
-
     const ref = doc(db, 'books', book.id);
-
-    await setDoc(ref, sanitizeForFirestore(preparedBook), {
-      merge: true,
-    });
-
+    await setDoc(ref, sanitizeForFirestore(book), { merge: true });
     return true;
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, path);
@@ -319,34 +252,29 @@ if (
   }
 }
 
-    // Converte imagens dos slides em URLs permanentes.
-    preparedBook.slides = await Promise.all(
-      preparedBook.slides.map(async (slide) => {
-        const photos = await Promise.all(
-          (slide.photos || []).map(async (photo, index) => {
-            if (!isImageDataUrl(photo.url)) {
-              return photo;
-            }
+/**
+ * Delete a book from Firestore
+ */
+export async function deleteBookFromFirestore(bookId: string): Promise<boolean> {
+  const path = `books/${bookId}`;
+  try {
+    const ref = doc(db, 'books', bookId);
+    await deleteDoc(ref);
+    return true;
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, path);
+    return false;
+  }
+}
 
-            const url = await uploadImageDataUrl(
-              photo.url,
-              `books/${book.id}/slides/${slide.id}/photo-${index}`
-            );
-
-            return { ...photo, url };
-          })
-        );
-
-        return { ...slide, photos };
-      })
-    );
-
-    const ref = doc(db, 'books', book.id);
-
-    await setDoc(ref, sanitizeForFirestore(preparedBook), {
-      merge: true,
-    });
-
+/**
+ * Save / Update a single course to Firestore
+ */
+export async function saveCourseToFirestore(course: Course): Promise<boolean> {
+  const path = `courses/${course.id}`;
+  try {
+    const ref = doc(db, 'courses', course.id);
+    await setDoc(ref, sanitizeForFirestore(course), { merge: true });
     return true;
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, path);
@@ -372,36 +300,11 @@ export async function deleteCourseFromFirestore(courseId: string): Promise<boole
 /**
  * Save / Update an activity to Firestore
  */
-export async function saveActivityToFirestore(
-  activity: ActivityItem
-): Promise<boolean> {
+export async function saveActivityToFirestore(activity: ActivityItem): Promise<boolean> {
   const path = `activities/${activity.id}`;
-
   try {
-    const preparedActivity: ActivityItem = {
-      ...activity,
-      photos: await Promise.all(
-        (activity.photos || []).map(async (photo, index) => {
-          if (!isImageDataUrl(photo.url)) {
-            return photo;
-          }
-
-          const url = await uploadImageDataUrl(
-            photo.url,
-            `activities/${activity.id}/photo-${index}`
-          );
-
-          return { ...photo, url };
-        })
-      ),
-    };
-
     const ref = doc(db, 'activities', activity.id);
-
-    await setDoc(ref, sanitizeForFirestore(preparedActivity), {
-      merge: true,
-    });
-
+    await setDoc(ref, sanitizeForFirestore(activity), { merge: true });
     return true;
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, path);

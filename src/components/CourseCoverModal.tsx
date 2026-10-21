@@ -1,9 +1,10 @@
-import React, { useState } from 'react';
-import { X, Image as ImageIcon, UploadCloud, Check, Sparkles } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { X, Image as ImageIcon, UploadCloud, Check, Sparkles, Loader2 } from 'lucide-react';
 import { Course } from '../types';
 import { COURSE_COVER_LIBRARY, getCourseCoverImage } from '../utils/courseCovers';
 import { EstacioLogo } from './EstacioLogo';
 import { AREA_CONFIGS } from '../data/defaults';
+import { uploadCoverImageToStorage } from '../services/storageService';
 
 interface CourseCoverModalProps {
   isOpen: boolean;
@@ -23,16 +24,29 @@ export const CourseCoverModal: React.FC<CourseCoverModalProps> = ({
   const currentCover = course.coverImage || getCourseCoverImage(course.name, course.academicArea);
   const [selectedUrl, setSelectedUrl] = useState<string>(currentCover);
   const [isDragging, setIsDragging] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const handleFileUpload = (file: File) => {
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      const result = e.target?.result as string;
-      if (result) {
-        setSelectedUrl(result);
+  // Sync selected cover when modal opens or course changes
+  useEffect(() => {
+    if (course) {
+      setSelectedUrl(course.coverImage || getCourseCoverImage(course.name, course.academicArea));
+    }
+  }, [course.id, course.coverImage]);
+
+  const handleFileUpload = async (file: File) => {
+    if (!file) return;
+    try {
+      setIsUploading(true);
+      const url = await uploadCoverImageToStorage(file, `course_${course.id}`);
+      if (url) {
+        setSelectedUrl(url);
       }
-    };
-    reader.readAsDataURL(file);
+    } catch (err) {
+      console.error('Erro ao processar capa:', err);
+    } finally {
+      setIsUploading(false);
+    }
   };
 
   const handleDrop = (e: React.DragEvent) => {
@@ -44,7 +58,9 @@ export const CourseCoverModal: React.FC<CourseCoverModalProps> = ({
   };
 
   const handleSave = () => {
-    onSaveCover(course.id, selectedUrl);
+    if (selectedUrl) {
+      onSaveCover(course.id, selectedUrl);
+    }
     onClose();
   };
 
@@ -133,26 +149,46 @@ export const CourseCoverModal: React.FC<CourseCoverModalProps> = ({
                 isDragging
                   ? 'border-[#00A3E0] bg-sky-50'
                   : 'border-slate-300 hover:border-[#00A3E0] hover:bg-slate-50'
-              }`}
+              } ${isUploading ? 'opacity-70 pointer-events-none' : ''}`}
               onClick={() => {
-                const input = document.createElement('input');
-                input.type = 'file';
-                input.accept = 'image/*';
-                input.onchange = (e: any) => {
-                  if (e.target?.files?.[0]) {
-                    handleFileUpload(e.target.files[0]);
-                  }
-                };
-                input.click();
+                if (isUploading) return;
+                fileInputRef.current?.click();
               }}
             >
-              <UploadCloud className="w-6 h-6 text-[#00A3E0] mx-auto mb-1.5" />
-              <p className="text-xs font-semibold text-slate-700">
-                Arraste uma foto aqui ou clique para selecionar do computador
-              </p>
-              <p className="text-[10px] text-slate-400 mt-0.5">
-                JPG, PNG ou WEBP em alta resolução (proporção 16:9 recomendada)
-              </p>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) {
+                    handleFileUpload(file);
+                  }
+                  e.target.value = '';
+                }}
+              />
+              {isUploading ? (
+                <div className="py-2 flex flex-col items-center">
+                  <Loader2 className="w-6 h-6 text-[#00A3E0] animate-spin mb-1.5" />
+                  <p className="text-xs font-bold text-[#004B8D]">
+                    Processando e aplicando capa...
+                  </p>
+                  <p className="text-[10px] text-slate-400 mt-0.5">
+                    Otimizando em alta resolução 16:9
+                  </p>
+                </div>
+              ) : (
+                <>
+                  <UploadCloud className="w-6 h-6 text-[#00A3E0] mx-auto mb-1.5" />
+                  <p className="text-xs font-semibold text-slate-700">
+                    Arraste uma foto aqui ou clique para selecionar do computador
+                  </p>
+                  <p className="text-[10px] text-slate-400 mt-0.5">
+                    JPG, PNG ou WEBP em alta resolução (proporção 16:9 recomendada)
+                  </p>
+                </>
+              )}
             </div>
           </div>
 

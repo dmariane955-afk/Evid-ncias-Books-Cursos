@@ -81,16 +81,22 @@ export default function App() {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed) && parsed.length > 0) {
           return parsed.map((b: AcademicBook) => {
-            const coverUrl =
-  b.coverImage ||
-  b.slides?.find((s) => s.type === 'capa')?.photos?.[0]?.url ||
-  getCourseCoverImage(b.courseName, b.academicArea);
+            const capaSlide = b.slides?.find((s) => s.type === 'capa');
+            const existingPhoto = capaSlide?.photos?.[0]?.url;
+            const coverUrl = b.coverImage || existingPhoto || getCourseCoverImage(b.courseName, b.academicArea);
             const updatedSlides = b.slides.map((s) => {
-              if (s.type === 'capa' && (!s.photos || s.photos.length === 0)) {
-                return {
-                  ...s,
-                  photos: [{ id: `cover-${b.courseId}`, url: coverUrl, caption: b.courseName, fit: 'cover' as const }],
-                };
+              if (s.type === 'capa') {
+                if (!s.photos || s.photos.length === 0) {
+                  return {
+                    ...s,
+                    photos: [{ id: `cover-${b.courseId}`, url: coverUrl, caption: b.courseName, fit: 'cover' as const }],
+                  };
+                } else if (b.coverImage && s.photos[0]?.url !== b.coverImage) {
+                  return {
+                    ...s,
+                    photos: [{ ...s.photos[0], url: b.coverImage }],
+                  };
+                }
               }
               return s;
             });
@@ -124,7 +130,7 @@ export default function App() {
   const [shareToast, setShareToast] = useState<string | null>(null);
 
   const isInitialSyncDone = useRef(false);
-  const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   // Modals state
   const [isActivityModalOpen, setIsActivityModalOpen] = useState(false);
@@ -308,10 +314,34 @@ export default function App() {
         },
         onBooksLoaded: (loadedBooks) => {
           if (loadedBooks && loadedBooks.length > 0) {
-            const sortedBooks = loadedBooks.map((b) => ({
-              ...b,
-              slides: (b.slides || []).sort((s1, s2) => (s1.order || 0) - (s2.order || 0)),
-            }));
+            const sortedBooks = loadedBooks.map((b) => {
+              const capaSlide = b.slides?.find((s) => s.type === 'capa');
+              const capaPhotoUrl = capaSlide?.photos?.[0]?.url;
+              const effectiveCover = b.coverImage || capaPhotoUrl;
+
+              const slides = (b.slides || []).sort((s1, s2) => (s1.order || 0) - (s2.order || 0)).map((s) => {
+                if (s.type === 'capa' && effectiveCover) {
+                  if (!s.photos || s.photos.length === 0) {
+                    return {
+                      ...s,
+                      photos: [{ id: `cover-${b.courseId}`, url: effectiveCover, caption: b.courseName, fit: 'cover' as const }],
+                    };
+                  } else if (s.photos[0]?.url !== effectiveCover) {
+                    return {
+                      ...s,
+                      photos: [{ ...s.photos[0], url: effectiveCover }],
+                    };
+                  }
+                }
+                return s;
+              });
+
+              return {
+                ...b,
+                coverImage: effectiveCover || b.coverImage,
+                slides,
+              };
+            });
             setBooks(sortedBooks);
             try {
               localStorage.setItem(STORAGE_BOOKS_KEY, JSON.stringify(sortedBooks));
@@ -448,94 +478,49 @@ export default function App() {
   };
 
   // Update current active slide in current book
-  
-  // Update current active slide in current book
- 
-// Atualiza o slide ativo do livro atual
-const handleUpdateActiveSlide = (updated: Partial<SlideData>) => {
-  if (!currentBook || !activeSlide) return;
+  const handleUpdateActiveSlide = (updated: Partial<SlideData>) => {
+    pushHistorySnapshot();
+    const updatedSlides = currentBook.slides.map((s) => (s.id === activeSlide.id ? { ...s, ...updated } : s));
+    let newCoverImage = currentBook.coverImage;
+    if (activeSlide.type === 'capa' && updated.photos && updated.photos.length > 0 && updated.photos[0]?.url) {
+      newCoverImage = updated.photos[0].url;
+      setCourses((prev) => {
+        const up = prev.map((c) => (c.id === currentBook.courseId ? { ...c, coverImage: newCoverImage } : c));
+        const targetCourse = up.find((c) => c.id === currentBook.courseId);
+        if (targetCourse) saveCourseToFirestore(targetCourse);
+        return up;
+      });
+    }
 
-  pushHistorySnapshot();
+    const updatedBook: AcademicBook = {
+      ...currentBook,
+      coverImage: newCoverImage,
+      slides: updatedSlides,
+      updatedAt: new Date().toISOString(),
+    };
+    persistBookUpdate(updatedBook, activeSlide.type === 'capa');
 
-  const updatedSlides = currentBook.slides.map((slide) =>
-    slide.id === activeSlide.id
-      ? { ...slide, ...updated }
-      : slide
-  );
-
-  const editedSlide = updatedSlides.find(
-    (slide) => slide.id === activeSlide.id
-  );
-
-  const isCoverSlide = editedSlide?.type === 'capa';
-  const editedCoverUrl = isCoverSlide
-    ? editedSlide?.photos?.[0]?.url
-    : undefined;
-
-  const updatedBook: AcademicBook = {
-    ...currentBook,
-    ...(editedCoverUrl ? { coverImage: editedCoverUrl } : {}),
-    slides: updatedSlides,
-    updatedAt: new Date().toISOString(),
+    // If this slide is linked to an activity, update the activity and save it to Firestore
+    if (activeSlide.activityId) {
+      setActivities((prev) =>
+        prev.map((act) => {
+          if (act.id !== activeSlide.activityId) return act;
+          const updatedAct: ActivityItem = {
+            ...act,
+            title: updated.title !== undefined ? updated.title : act.title,
+            date: updated.date !== undefined ? updated.date : act.date,
+            time: updated.time !== undefined ? updated.time : act.time,
+            activityType: updated.activityType !== undefined ? updated.activityType : act.activityType,
+            objective: updated.objective !== undefined ? updated.objective : act.objective,
+            photos: updated.photos !== undefined ? updated.photos : act.photos,
+            updatedAt: new Date().toISOString(),
+          };
+          saveActivityToFirestore(updatedAct);
+          return updatedAct;
+        })
+      );
+    }
   };
-
-  // Salva imediatamente o slide e o livro.
-  persistBookUpdate(updatedBook, true);
-
-  // Atualiza a capa do curso correspondente, sem afetar
-  // outros cursos ou a outra unidade.
-  if (editedCoverUrl) {
-    setCourses((prevCourses) => {
-      const updatedCourses = prevCourses.map((course) =>
-        course.id === currentBook.courseId
-          ? { ...course, coverImage: editedCoverUrl }
-          : course
-      );
-
-      const targetCourse = updatedCourses.find(
-        (course) => course.id === currentBook.courseId
-      );
-
-      if (targetCourse) {
-        void saveCourseToFirestore(targetCourse);
-      }
-
-      return updatedCourses;
-    });
-  }
-
-  // Mantém a atualização das atividades vinculadas.
-  if (activeSlide.activityId) {
-    setActivities((prev) =>
-      prev.map((act) => {
-        if (act.id !== activeSlide.activityId) return act;
-
-        const updatedAct: ActivityItem = {
-          ...act,
-          title: updated.title !== undefined ? updated.title : act.title,
-          date: updated.date !== undefined ? updated.date : act.date,
-          time: updated.time !== undefined ? updated.time : act.time,
-          activityType:
-            updated.activityType !== undefined
-              ? updated.activityType
-              : act.activityType,
-          objective:
-            updated.objective !== undefined
-              ? updated.objective
-              : act.objective,
-          photos:
-            updated.photos !== undefined
-              ? updated.photos
-              : act.photos,
-          updatedAt: new Date().toISOString(),
-        };
-
-        void saveActivityToFirestore(updatedAct);
-        return updatedAct;
-      })
-    );
-  }
-};
 
   // 4. Activity Management with STRICT ISOLATION BETWEEN BOOKS & UNITS
   const handleSaveActivity = (activity: ActivityItem, applyToAllSynced: boolean = true) => {
@@ -1063,13 +1048,21 @@ const handleUpdateActiveSlide = (updated: Partial<SlideData>) => {
     setCourses((prevCourses) => {
       const updated = prevCourses.map((c) => (c.id === courseId ? { ...c, coverImage: newCoverUrl } : c));
       const targetC = updated.find((c) => c.id === courseId);
-      if (targetC) saveCourseToFirestore(targetC);
+      if (targetC) {
+        saveCourseToFirestore(targetC);
+        try {
+          localStorage.setItem(STORAGE_COURSES_KEY, JSON.stringify(updated));
+        } catch (e) {
+          console.warn(e);
+        }
+      }
       return updated;
     });
     setBooks((prevBooks) => {
       const updated = prevBooks.map((b) => {
         if (b.courseId === courseId) {
-          const updatedSlides = (b.slides || []).map((s) => {
+          const hasCapa = b.slides.some((s) => s.type === 'capa');
+          let updatedSlides = b.slides.map((s) => {
             if (s.type === 'capa') {
               return {
                 ...s,
@@ -1085,6 +1078,28 @@ const handleUpdateActiveSlide = (updated: Partial<SlideData>) => {
             }
             return s;
           });
+
+          if (!hasCapa) {
+            updatedSlides = [
+              {
+                id: `slide-capa-${courseId}`,
+                type: 'capa' as const,
+                title: b.courseName,
+                subtitle: 'Book de Evidências Acadêmicas',
+                order: 1,
+                photos: [
+                  {
+                    id: `cover-photo-${courseId}`,
+                    url: newCoverUrl,
+                    caption: `Capa Oficial · ${b.courseName}`,
+                    fit: 'cover' as const,
+                  },
+                ],
+              },
+              ...updatedSlides,
+            ];
+          }
+
           const updatedB = {
             ...b,
             coverImage: newCoverUrl,
@@ -1096,6 +1111,13 @@ const handleUpdateActiveSlide = (updated: Partial<SlideData>) => {
         }
         return b;
       });
+
+      try {
+        localStorage.setItem(STORAGE_BOOKS_KEY, JSON.stringify(updated));
+      } catch (e) {
+        console.warn(e);
+      }
+
       return updated;
     });
   };

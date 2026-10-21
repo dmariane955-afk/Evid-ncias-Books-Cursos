@@ -209,50 +209,68 @@ export const SlideThumbnails: React.FC<SlideThumbnailsProps> = ({
                     </div>
                   </>
                 ) : slide.type === 'evidencia' ? (
-                  /* Slide de Evidência com visualização real das fotos e textos */
+                  /* Slide de Evidência com visualização proporcional fiel (2 colunas: Objetivo + Fotos) */
                   <div className="relative z-10 flex flex-col justify-between h-full pt-0.5">
                     <div>
                       <div className="flex items-center justify-between text-[6.5px] text-[#00A3E0] font-bold tracking-tight uppercase truncate">
                         <span className="truncate max-w-[110px]">{slide.activityType || 'ATIVIDADE'}</span>
                         <span className="font-mono text-slate-400">{slide.date || ''}</span>
                       </div>
-                      <div className="text-[8px] font-bold text-slate-900 line-clamp-1 leading-tight">
+                      <div className="text-[7.5px] font-bold text-slate-900 line-clamp-1 leading-tight">
                         {slide.title || 'Atividade sem título'}
                       </div>
                     </div>
 
-                    {/* Miniature Photos Display (Renderiza fotos reais com layouts e transformações) */}
-                    {slide.photos && slide.photos.length > 0 ? (
-                      <div
-                        className={`my-1 flex-1 min-h-[32px] max-h-[46px] grid gap-1 overflow-hidden rounded-xs bg-slate-200/60 ${
-                          slide.photoLayout === 'split-50-50' || slide.photos.length === 2
-                            ? 'grid-cols-2'
-                            : slide.photoLayout === 'grid-3' || slide.photos.length === 3
-                            ? 'grid-cols-3'
-                            : 'grid-cols-1'
-                        }`}
-                      >
-                        {slide.photos.slice(0, 3).map((ph, pIdx) => (
-                          <div key={ph.id || pIdx} className="relative w-full h-full overflow-hidden bg-slate-300 rounded-[1px]">
-                            <img
-                              src={ph.url}
-                              alt=""
-                              className={`w-full h-full ${ph.fit === 'contain' ? 'object-contain' : 'object-cover'}`}
-                              style={{
-                                transform: `scale(${(ph.zoom || 1) * (ph.scale || 1)}) translate(${ph.x || 0}%, ${ph.y || 0}%) rotate(${ph.rotation || 0}deg)`,
-                                objectPosition: ph.position === 'top' ? 'top center' : ph.position === 'bottom' ? 'bottom center' : ph.position === 'left' ? 'left center' : ph.position === 'right' ? 'right center' : `${ph.cropX ?? 50}% ${ph.cropY ?? 50}%`,
-                              }}
-                            />
+                    {/* Miniature 2-Column Stage matching SlideCanvas and PowerPoint */}
+                    <div className="my-0.5 flex-1 min-h-0 flex flex-row gap-1 items-stretch">
+                      {/* Left Mini Objective Card */}
+                      <div className="w-[40%] bg-slate-200/50 border border-slate-300/60 rounded-[2px] p-1 flex flex-col justify-between overflow-hidden">
+                        <span className="text-[5.5px] font-bold text-[#004B8D] uppercase tracking-tighter truncate block">
+                          Objetivo
+                        </span>
+                        <div className="space-y-0.5 my-auto">
+                          <div className="h-[2px] w-full bg-slate-300 rounded-[1px]" />
+                          <div className="h-[2px] w-4/5 bg-slate-300 rounded-[1px]" />
+                          <div className="h-[2px] w-3/5 bg-slate-300 rounded-[1px]" />
+                        </div>
+                        <span className="text-[5px] text-slate-400 truncate block">
+                          Registro
+                        </span>
+                      </div>
+
+                      {/* Right Mini Photos Card */}
+                      <div className="w-[60%] flex flex-col justify-between overflow-hidden">
+                        {slide.photos && slide.photos.length > 0 ? (
+                          <div
+                            className={`h-full grid gap-0.5 overflow-hidden rounded-[2px] bg-slate-200/60 ${
+                              slide.photoLayout === 'split-50-50' || slide.photos.length === 2
+                                ? 'grid-rows-2'
+                                : slide.photoLayout === 'grid-3' || slide.photos.length >= 3
+                                ? 'grid-cols-2 grid-rows-2'
+                                : 'grid-cols-1'
+                            }`}
+                          >
+                            {slide.photos.slice(0, 4).map((ph, pIdx) => (
+                              <div key={ph.id || pIdx} className="relative w-full h-full min-h-0 overflow-hidden bg-slate-300 rounded-[1px]">
+                                <img
+                                  src={ph.url}
+                                  alt=""
+                                  className={`w-full h-full ${ph.fit === 'contain' ? 'object-contain' : 'object-cover'}`}
+                                  style={{
+                                    transform: `scale(${(ph.zoom || 1) * (ph.scale || 1)}) translate(${ph.x || 0}%, ${ph.y || 0}%) rotate(${ph.rotation || 0}deg)`,
+                                    objectPosition: ph.position === 'top' ? 'top center' : ph.position === 'bottom' ? 'bottom center' : ph.position === 'left' ? 'left center' : ph.position === 'right' ? 'right center' : `${ph.cropX ?? 50}% ${ph.cropY ?? 50}%`,
+                                  }}
+                                />
+                              </div>
+                            ))}
                           </div>
-                        ))}
+                        ) : (
+                          <div className="h-full border border-dashed border-slate-300 rounded-[2px] bg-slate-100 flex items-center justify-center">
+                            <span className="text-[5.5px] text-slate-400">Sem fotos</span>
+                          </div>
+                        )}
                       </div>
-                    ) : (
-                      <div className="my-1 flex-1 min-h-[32px] p-1 bg-slate-50 border border-slate-200 rounded-xs flex items-center justify-center">
-                        <p className="text-[6.5px] text-slate-500 line-clamp-2 italic leading-tight">
-                          {slide.objective || 'Aguardando inserção de imagens...'}
-                        </p>
-                      </div>
-                    )}
+                    </div>
 
                     {/* Render custom free text boxes miniature */}
                     {(slide.customTextBoxes || []).map((box) => (
@@ -272,31 +290,121 @@ export const SlideThumbnails: React.FC<SlideThumbnailsProps> = ({
                       </div>
                     ))}
 
-                    <div className="flex items-center justify-between text-[6.5px] text-slate-400 border-t border-slate-200/80 pt-0.5">
+                    <div className="flex items-center justify-between text-[6px] text-slate-400 border-t border-slate-200 pt-0.5">
                       <span className="truncate max-w-[90px]">{slide.footerLeftText || 'Estácio'}</span>
-                      <span className="font-mono text-[6px]">16:9</span>
+                      <span className="font-mono text-[5.5px]">16:9</span>
+                    </div>
+                  </div>
+                ) : slide.type === 'sumario' ? (
+                  /* Miniatura Sumário Analítico */
+                  <div className="relative z-10 flex flex-col justify-between h-full pt-0.5">
+                    <div>
+                      <div className="text-[6.5px] text-[#00A3E0] font-bold tracking-tight uppercase truncate">
+                        SUMÁRIO ANALÍTICO
+                      </div>
+                      <div className="text-[7.5px] font-bold text-slate-800 line-clamp-1 leading-tight">
+                        {slide.title || 'Sumário das Atividades'}
+                      </div>
+                    </div>
+                    <div className="my-auto grid grid-cols-2 gap-1 py-0.5">
+                      {[1, 2, 3, 4].map((n) => (
+                        <div key={n} className="flex items-center gap-1 p-0.5 rounded-[2px] bg-slate-50 border border-slate-200">
+                          <span className="w-2.5 h-2.5 rounded-[1px] bg-[#E0F2FE] text-[#004B8D] font-mono text-[5px] font-bold flex items-center justify-center shrink-0">
+                            0{n}
+                          </span>
+                          <div className="h-[2px] w-8 bg-slate-300 rounded-[1px]" />
+                        </div>
+                      ))}
+                    </div>
+                    <div className="flex items-center justify-between text-[6px] text-slate-400 border-t border-slate-200 pt-0.5">
+                      <span className="truncate max-w-[80px]">{slide.footerLeftText || 'Estácio'}</span>
+                      <span className="font-mono text-[5.5px]">16:9</span>
+                    </div>
+                  </div>
+                ) : slide.type === 'apresentacao' ? (
+                  /* Miniatura Apresentação (2 Cards) */
+                  <div className="relative z-10 flex flex-col justify-between h-full pt-0.5">
+                    <div>
+                      <div className="text-[6.5px] text-[#00A3E0] font-bold tracking-tight uppercase truncate">
+                        APRESENTAÇÃO
+                      </div>
+                      <div className="text-[7.5px] font-bold text-slate-800 line-clamp-1 leading-tight">
+                        {slide.title || 'Apresentação'}
+                      </div>
+                    </div>
+                    <div className="my-auto grid grid-cols-2 gap-1 py-0.5">
+                      <div className="rounded-[2px] border border-slate-200 bg-slate-50 overflow-hidden">
+                        <div className="h-1.5 bg-[#E0F2FE] border-b border-slate-200 flex items-center px-0.5">
+                          <span className="text-[4.5px] font-bold text-[#004B8D]">01. Contexto</span>
+                        </div>
+                        <div className="p-1 space-y-0.5">
+                          <div className="h-[2px] w-full bg-slate-300 rounded-[1px]" />
+                          <div className="h-[2px] w-4/5 bg-slate-300 rounded-[1px]" />
+                        </div>
+                      </div>
+                      <div className="rounded-[2px] border border-slate-200 bg-slate-50 overflow-hidden">
+                        <div className="h-1.5 bg-[#E0F2FE] border-b border-slate-200 flex items-center px-0.5">
+                          <span className="text-[4.5px] font-bold text-[#004B8D]">02. Metodologia</span>
+                        </div>
+                        <div className="p-1 space-y-0.5">
+                          <div className="h-[2px] w-full bg-slate-300 rounded-[1px]" />
+                          <div className="h-[2px] w-4/5 bg-slate-300 rounded-[1px]" />
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex items-center justify-between text-[6px] text-slate-400 border-t border-slate-200 pt-0.5">
+                      <span className="truncate max-w-[80px]">{slide.footerLeftText || 'Estácio'}</span>
+                      <span className="font-mono text-[5.5px]">16:9</span>
+                    </div>
+                  </div>
+                ) : slide.type === 'diretrizes' ? (
+                  /* Miniatura Diretrizes MEC */
+                  <div className="relative z-10 flex flex-col justify-between h-full pt-0.5">
+                    <div>
+                      <div className="text-[6.5px] text-[#00A3E0] font-bold tracking-tight uppercase truncate">
+                        DIRETRIZES MEC
+                      </div>
+                      <div className="text-[7.5px] font-bold text-slate-800 line-clamp-1 leading-tight">
+                        {slide.title || 'Diretrizes Curriculares'}
+                      </div>
+                    </div>
+                    <div className="my-auto space-y-1 py-0.5">
+                      {[1, 2].map((i) => (
+                        <div key={i} className="rounded-[2px] border border-slate-200 bg-slate-50 flex items-stretch overflow-hidden">
+                          <div className="w-0.5 bg-[#00A3E0] shrink-0" />
+                          <div className="p-0.5 flex-1 space-y-0.5">
+                            <div className="h-[2px] w-2/3 bg-slate-400 rounded-[1px]" />
+                            <div className="h-[2px] w-full bg-slate-200 rounded-[1px]" />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="flex items-center justify-between text-[6px] text-slate-400 border-t border-slate-200 pt-0.5">
+                      <span className="truncate max-w-[80px]">{slide.footerLeftText || 'Estácio'}</span>
+                      <span className="font-mono text-[5.5px]">16:9</span>
                     </div>
                   </div>
                 ) : (
-                  /* Demais slides com títulos e layouts institucionais */
+                  /* Demais slides com títulos e layouts institucionais (equipe, contatos, etc.) */
                   <div className="relative z-10 flex flex-col justify-between h-full pt-0.5">
                     <div>
                       <div className="text-[6.5px] text-[#00A3E0] font-bold tracking-tight uppercase truncate">
                         {slide.type.toUpperCase()}
                       </div>
-                      <div className="text-[8.5px] font-bold text-slate-800 line-clamp-1 leading-tight">
+                      <div className="text-[7.5px] font-bold text-slate-800 line-clamp-1 leading-tight">
                         {slide.title || 'Slide Institucional'}
                       </div>
-                      {slide.subtitle && (
-                        <div className="text-[6.5px] text-slate-500 line-clamp-1">
-                          {slide.subtitle}
-                        </div>
-                      )}
                     </div>
 
-                    <div className="my-auto py-1 grid grid-cols-2 gap-1 opacity-70">
-                      <div className="h-3 rounded-xs bg-[#E0F2FE]/70 border border-[#00A3E0]/30" />
-                      <div className="h-3 rounded-xs bg-slate-100 border border-slate-200" />
+                    <div className="my-auto py-0.5 grid grid-cols-2 gap-1">
+                      <div className="h-4 rounded-[2px] bg-slate-50 border border-slate-200 p-0.5 space-y-0.5">
+                        <div className="h-[2px] w-3/4 bg-[#004B8D] rounded-[1px]" />
+                        <div className="h-[2px] w-full bg-slate-200 rounded-[1px]" />
+                      </div>
+                      <div className="h-4 rounded-[2px] bg-slate-50 border border-slate-200 p-0.5 space-y-0.5">
+                        <div className="h-[2px] w-3/4 bg-[#004B8D] rounded-[1px]" />
+                        <div className="h-[2px] w-full bg-slate-200 rounded-[1px]" />
+                      </div>
                     </div>
 
                     {/* Render custom free text boxes miniature */}
@@ -317,9 +425,9 @@ export const SlideThumbnails: React.FC<SlideThumbnailsProps> = ({
                       </div>
                     ))}
 
-                    <div className="flex items-center justify-between text-[6.5px] text-slate-400 border-t border-slate-200 pt-0.5">
+                    <div className="flex items-center justify-between text-[6px] text-slate-400 border-t border-slate-200 pt-0.5">
                       <span className="truncate max-w-[80px]">{slide.footerLeftText || 'Estácio'}</span>
-                      <span className="font-mono text-[6px]">16:9</span>
+                      <span className="font-mono text-[5.5px]">16:9</span>
                     </div>
                   </div>
                 )}
