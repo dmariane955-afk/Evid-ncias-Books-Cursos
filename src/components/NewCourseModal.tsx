@@ -4,6 +4,7 @@ import { AcademicArea, CampusId } from '../types';
 import { COURSE_COVER_LIBRARY, getCourseCoverImage } from '../utils/courseCovers';
 import { EstacioLogo } from './EstacioLogo';
 import { AREA_CONFIGS } from '../data/defaults';
+import { compressImageToDataUrl } from '../services/storageService';
 
 interface NewCourseModalProps {
   isOpen: boolean;
@@ -39,15 +40,16 @@ export const NewCourseModal: React.FC<NewCourseModalProps> = ({
   const activeCover = customCoverUrl || autoCover;
   const areaConfig = AREA_CONFIGS[area];
 
-  const handleFileUpload = (file: File) => {
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      const result = e.target?.result as string;
-      if (result) {
-        setCustomCoverUrl(result);
+  const handleFileUpload = async (file: File) => {
+    if (!file) return;
+    try {
+      const compressed = await compressImageToDataUrl(file, 1280, 720, 0.75);
+      if (compressed) {
+        setCustomCoverUrl(compressed);
       }
-    };
-    reader.readAsDataURL(file);
+    } catch (err) {
+      console.warn('Erro ao comprimir imagem do curso:', err);
+    }
   };
 
   const handleSubmit = (e: React.FormEvent) => {

@@ -86,7 +86,7 @@ export const INITIAL_COURSES: Course[] = [
     coordinator: '',
     director: '',
     period: '2026.1',
-    coverImage: '/src/assets/images/course_software_code_1790971409616.jpg',
+    coverImage: '/assets/images/course_software_code_1790971409616.jpg',
   },
   {
     id: 'course-eng-civil',
@@ -96,7 +96,7 @@ export const INITIAL_COURSES: Course[] = [
     coordinator: '',
     director: '',
     period: '2026.1',
-    coverImage: '/src/assets/images/course_civil_engineering_1790971389732.jpg',
+    coverImage: '/assets/images/course_civil_engineering_1790971389732.jpg',
   },
   {
     id: 'course-biomedicina',
@@ -106,7 +106,7 @@ export const INITIAL_COURSES: Course[] = [
     coordinator: '',
     director: '',
     period: '2026.1',
-    coverImage: '/src/assets/images/course_biomedicine_lab_1790971432421.jpg',
+    coverImage: '/assets/images/course_biomedicine_lab_1790971432421.jpg',
   },
   {
     id: 'course-enfermagem',
@@ -116,7 +116,7 @@ export const INITIAL_COURSES: Course[] = [
     coordinator: '',
     director: '',
     period: '2026.1',
-    coverImage: '/src/assets/images/course_nursing_health_1790971399494.jpg',
+    coverImage: '/assets/images/course_nursing_health_1790971399494.jpg',
   },
   {
     id: 'course-adm',
@@ -126,7 +126,7 @@ export const INITIAL_COURSES: Course[] = [
     coordinator: '',
     director: '',
     period: '2026.1',
-    coverImage: '/src/assets/images/course_business_adm_1790971421435.jpg',
+    coverImage: '/assets/images/course_business_adm_1790971421435.jpg',
   },
   {
     id: 'course-ads-fatec',
@@ -136,7 +136,7 @@ export const INITIAL_COURSES: Course[] = [
     coordinator: '',
     director: '',
     period: '2026.1',
-    coverImage: '/src/assets/images/course_software_code_1790971409616.jpg',
+    coverImage: '/assets/images/course_software_code_1790971409616.jpg',
   },
   {
     id: 'course-gestao-ti-fatec',
@@ -146,7 +146,7 @@ export const INITIAL_COURSES: Course[] = [
     coordinator: '',
     director: '',
     period: '2026.1',
-    coverImage: '/src/assets/images/technical_visit_field_1790966704861.jpg',
+    coverImage: '/assets/images/technical_visit_field_1790966704861.jpg',
   },
 ];
 
@@ -200,7 +200,7 @@ export const INITIAL_ACTIVITIES: ActivityItem[] = [
     photos: [
       {
         id: 'p-act-1',
-        url: '/src/assets/images/lab_engineering_practice_1790966670659.jpg',
+        url: '/assets/images/lab_engineering_practice_1790966670659.jpg',
         caption: 'Registro fotográfico da atividade prática',
         fit: 'cover',
       },
@@ -226,7 +226,7 @@ export const INITIAL_ACTIVITIES: ActivityItem[] = [
     photos: [
       {
         id: 'p-act-2',
-        url: '/src/assets/images/campus_academic_lecture_1790966693712.jpg',
+        url: '/assets/images/campus_academic_lecture_1790966693712.jpg',
         caption: 'Encontro com discentes e coordenações participantes',
         fit: 'cover',
       },
@@ -252,7 +252,7 @@ export const INITIAL_ACTIVITIES: ActivityItem[] = [
     photos: [
       {
         id: 'p-act-3',
-        url: '/src/assets/images/technical_visit_field_1790966704861.jpg',
+        url: '/assets/images/technical_visit_field_1790966704861.jpg',
         caption: 'Aplicação prática e orientações em campo',
         fit: 'cover',
       },

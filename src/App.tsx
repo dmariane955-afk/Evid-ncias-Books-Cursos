@@ -317,10 +317,14 @@ export default function App() {
             const sortedBooks = loadedBooks.map((b) => {
               const capaSlide = b.slides?.find((s) => s.type === 'capa');
               const capaPhotoUrl = capaSlide?.photos?.[0]?.url;
-              const effectiveCover = b.coverImage || capaPhotoUrl;
+              const customDataUrl = [b.coverImage, capaPhotoUrl].find(
+                (url) => url && typeof url === 'string' && url.startsWith('data:')
+              );
+              const effectiveCover = customDataUrl || b.coverImage || capaPhotoUrl;
 
               const slides = (b.slides || []).sort((s1, s2) => (s1.order || 0) - (s2.order || 0)).map((s) => {
                 if (s.type === 'capa' && effectiveCover) {
+                  const currentPhoto = s.photos?.[0];
                   if (!s.photos || s.photos.length === 0) {
                     return {
                       ...s,
@@ -329,7 +333,7 @@ export default function App() {
                   } else if (s.photos[0]?.url !== effectiveCover) {
                     return {
                       ...s,
-                      photos: [{ ...s.photos[0], url: effectiveCover }],
+                      photos: [{ ...currentPhoto, id: currentPhoto.id || `cover-${b.courseId}`, url: effectiveCover }],
                     };
                   }
                 }
@@ -1058,20 +1062,24 @@ export default function App() {
       }
       return updated;
     });
+
     setBooks((prevBooks) => {
       const updated = prevBooks.map((b) => {
-        if (b.courseId === courseId) {
-          const hasCapa = b.slides.some((s) => s.type === 'capa');
-          let updatedSlides = b.slides.map((s) => {
+        if (b.courseId === courseId || b.id === `book-${courseId}` || b.id === courseId) {
+          const hasCapa = b.slides?.some((s) => s.type === 'capa');
+          let updatedSlides = (b.slides || []).map((s) => {
             if (s.type === 'capa') {
+              const currentPhoto = s.photos?.[0];
               return {
                 ...s,
                 photos: [
                   {
-                    id: `cover-photo-${courseId}`,
+                    id: currentPhoto?.id || `cover-photo-${courseId}`,
                     url: newCoverUrl,
                     caption: `Capa Oficial · ${b.courseName}`,
                     fit: 'cover' as const,
+                    position: currentPhoto?.position || 'center',
+                    zoom: currentPhoto?.zoom || 1,
                   },
                 ],
               };
@@ -1100,7 +1108,7 @@ export default function App() {
             ];
           }
 
-          const updatedB = {
+          const updatedB: AcademicBook = {
             ...b,
             coverImage: newCoverUrl,
             updatedAt: new Date().toISOString(),

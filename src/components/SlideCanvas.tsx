@@ -518,15 +518,23 @@ export const SlideCanvas: React.FC<SlideCanvasProps> = ({
 
         {/* SLIDE 01: CAPA DO BOOK (NOVO DESIGN: AZUL COM DEGRADÊ E IMAGEM INTEGRADA) */}
         {slide.type === 'capa' && (() => {
-          const capaCoverUrl = slide.photos[0]?.url || book.coverImage || getCourseCoverImage(book.courseName, book.academicArea);
+          const customDataUrl = [slide.photos[0]?.url, book.coverImage].find(
+            (url) => url && typeof url === 'string' && url.startsWith('data:')
+          );
+          const capaCoverUrl =
+            customDataUrl ||
+            book.coverImage ||
+            slide.photos[0]?.url ||
+            getCourseCoverImage(book.courseName, book.academicArea);
           const coverPhoto = slide.photos[0];
           const coverPos = coverPhoto?.position || 'center';
           const coverZoom = coverPhoto?.zoom || 1;
 
           const updateCoverProps = (props: Partial<PhotoItem>) => {
+            const finalUrl = props.url || capaCoverUrl;
             const updatedPhoto: PhotoItem = {
               id: coverPhoto?.id || `cover-photo-${Date.now()}`,
-              url: capaCoverUrl,
+              url: finalUrl,
               caption: `Capa Oficial · ${book.courseName}`,
               fit: 'cover',
               position: coverPos,

@@ -287,7 +287,16 @@ export const HomePage: React.FC<HomePageProps> = ({
               ).length;
               const AreaIcon = getAreaIcon(course.academicArea);
               const isMenuOpen = openBookMenuId === course.id;
-              const coverUrl = course.coverImage || courseBook?.coverImage || getCourseCoverImage(course.name, course.academicArea);
+              const capaSlidePhoto = courseBook?.slides?.find((s) => s.type === 'capa')?.photos?.[0]?.url;
+              const customDataUrl = [course.coverImage, courseBook?.coverImage, capaSlidePhoto].find(
+                (url) => url && typeof url === 'string' && url.startsWith('data:')
+              );
+              const coverUrl =
+                customDataUrl ||
+                course.coverImage ||
+                courseBook?.coverImage ||
+                capaSlidePhoto ||
+                getCourseCoverImage(course.name, course.academicArea);
               const areaConfig = AREA_CONFIGS[course.academicArea];
 
               return (
