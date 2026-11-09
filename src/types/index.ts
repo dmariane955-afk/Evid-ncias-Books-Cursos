@@ -23,7 +23,18 @@ export type SlideType =
   | 'resultados'
   | 'contatos';
 
-export type PhotoLayout = 'single' | 'split-50-50' | 'split-70-30' | 'grid-3' | 'gallery-4';
+export type PhotoLayout =
+  | 'auto'
+  | 'editorial'
+  | 'side-by-side'
+  | 'stacked'
+  | 'grid'
+  | 'mosaic'
+  | 'single'
+  | 'split-50-50'
+  | 'split-70-30'
+  | 'grid-3'
+  | 'gallery-4';
 
 export type PhotoFit = 'cover' | 'contain';
 
@@ -64,12 +75,20 @@ export interface TextBoxElement {
   x: number; // percentage (0-100)
   y: number; // percentage (0-100)
   width: number; // percentage (10-100)
-  height?: number;
+  height?: number; // percentage or px
   fontSize?: number; // px equivalent or relative
-  color?: string;
+  color?: string; // Text color (hex)
+  backgroundColor?: string; // Background color (hex or rgba)
+  borderColor?: string; // Border color (hex)
+  borderWidth?: number; // 0, 1, 2, 3
+  borderRadius?: number; // 0, 4, 8, 12, 9999
+  padding?: number; // in px
   bold?: boolean;
   italic?: boolean;
   align?: 'left' | 'center' | 'right';
+  isBalloon?: boolean; // Speech callout balloon with pointer
+  balloonPosition?: 'top' | 'bottom' | 'left' | 'right';
+  category?: 'custom' | 'objective' | 'pedagogical' | 'meta' | 'badge';
 }
 
 export interface ActivityItem {
@@ -149,6 +168,9 @@ export interface SlideData {
   subtitle?: string;
   order: number;
   activityId?: string; // Linked activity ID for auto-sync across course books
+  syncGroupId?: string; // Global sync group identifier across books
+  syncedBookIds?: string[]; // List of book IDs currently keeping this slide synchronized
+  isShared?: boolean; // Whether slide is actively synced across multiple books
   activityType?: ActivityType;
   date?: string;
   time?: string;

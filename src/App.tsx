@@ -11,7 +11,8 @@ import { PresentationModal } from './components/PresentationModal';
 import { 
   DeleteConfirmModal, 
   DeleteSyncedActivityModal, 
-  SyncContentModal 
+  SyncContentModal,
+  SyncSlideModal 
 } from './components/SyncAndActionModals';
 import { Course, AcademicBook, ActivityItem, SlideData, CampusId, AcademicArea } from './types';
 import { INITIAL_COURSES, INITIAL_ACTIVITIES, createInitialBooks, COURSES_BY_AREA } from './data/defaults';
@@ -182,6 +183,17 @@ export default function App() {
     targetCourses: [],
     initialSelectedCourseIds: [],
     onConfirmSync: () => {},
+  });
+
+  // Modal para sincronização de slide individual pós-criação (Requisito 4)
+  const [syncSlideModalState, setSyncSlideModalState] = useState<{
+    isOpen: boolean;
+    slide: SlideData | null;
+    sourceBook: AcademicBook | null;
+  }>({
+    isOpen: false,
+    slide: null,
+    sourceBook: null,
   });
 
   // 2. Undo / Redo History Stack (Ctrl+Z / Ctrl+Shift+Z)
@@ -403,6 +415,14 @@ export default function App() {
   // Centralized persistent saver for books with immediate/debounced dispatch and real status tracking
   const persistBookUpdate = useCallback(
     (updatedBook: AcademicBook, immediate: boolean = false) => {
+      console.log('[CoverImageTrace] persistBookUpdate called:', {
+        bookId: updatedBook.id,
+        courseId: updatedBook.courseId,
+        coverImage: updatedBook.coverImage ? `${updatedBook.coverImage.substring(0, 50)}...` : 'undefined',
+        capaSlidePhoto: updatedBook.slides?.find((s) => s.type === 'capa')?.photos?.[0]?.url ? `${updatedBook.slides.find((s) => s.type === 'capa')!.photos[0].url.substring(0, 50)}...` : 'none',
+        immediate,
+      });
+
       // 1. Update React state immediately
       setBooks((prev) => prev.map((b) => (b.id === updatedBook.id ? updatedBook : b)));
 
@@ -423,6 +443,10 @@ export default function App() {
 
       const doSave = async () => {
         try {
+          console.log('[CoverImageTrace] persistBookUpdate executing doSave to Firestore:', {
+            bookId: updatedBook.id,
+            coverImage: updatedBook.coverImage ? `${updatedBook.coverImage.substring(0, 50)}...` : 'undefined',
+          });
           const success = await saveBookToFirestore(updatedBook);
           if (success) {
             setSyncStatus('connected');
@@ -470,45 +494,171 @@ export default function App() {
     }
   };
 
-  // Update a book's properties
+  // Update a book's properties (with explicit coverImage synchronization & tracing)
   const handleUpdateBook = (updated: Partial<AcademicBook>) => {
     pushHistorySnapshot();
-    const updatedBook: AcademicBook = {
-      ...currentBook,
-      ...updated,
-      updatedAt: new Date().toISOString(),
-    };
-    persistBookUpdate(updatedBook, true);
-  };
+    const baseBook = books.find((b) => b.id === currentBook.id) || currentBook;
 
-  // Update current active slide in current book
-  const handleUpdateActiveSlide = (updated: Partial<SlideData>) => {
-    pushHistorySnapshot();
-    const updatedSlides = currentBook.slides.map((s) => (s.id === activeSlide.id ? { ...s, ...updated } : s));
-    let newCoverImage = currentBook.coverImage;
-    if (activeSlide.type === 'capa' && updated.photos && updated.photos.length > 0 && updated.photos[0]?.url) {
-      newCoverImage = updated.photos[0].url;
+    console.log('[CoverImageTrace] handleUpdateBook called:', {
+      bookId: baseBook.id,
+      previousCoverImage: baseBook.coverImage ? `${baseBook.coverImage.substring(0, 50)}...` : 'none',
+      incomingCoverImage: updated.coverImage ? `${updated.coverImage.substring(0, 50)}...` : 'undefined',
+    });
+
+    const newCover = updated.coverImage !== undefined ? updated.coverImage : baseBook.coverImage;
+
+    // Ensure capa slide photos[0].url is kept in sync if coverImage is being updated
+    let updatedSlides = baseBook.slides;
+    if (updated.coverImage) {
+      updatedSlides = baseBook.slides.map((s) => {
+        if (s.type === 'capa') {
+          const firstPhoto = s.photos?.[0];
+          return {
+            ...s,
+            photos: [
+              {
+                id: firstPhoto?.id || `cover-photo-${baseBook.courseId}`,
+                url: updated.coverImage!,
+                caption: firstPhoto?.caption || `Capa Oficial · ${baseBook.courseName}`,
+                fit: firstPhoto?.fit || 'cover',
+                position: firstPhoto?.position || 'center',
+                zoom: firstPhoto?.zoom || 1,
+              },
+            ],
+          };
+        }
+        return s;
+      });
+
+      // Synchronize course in courses list & Firestore
       setCourses((prev) => {
-        const up = prev.map((c) => (c.id === currentBook.courseId ? { ...c, coverImage: newCoverImage } : c));
-        const targetCourse = up.find((c) => c.id === currentBook.courseId);
+        const up = prev.map((c) => (c.id === baseBook.courseId ? { ...c, coverImage: updated.coverImage } : c));
+        const targetCourse = up.find((c) => c.id === baseBook.courseId);
         if (targetCourse) saveCourseToFirestore(targetCourse);
         return up;
       });
     }
 
     const updatedBook: AcademicBook = {
-      ...currentBook,
+      ...baseBook,
+      ...updated,
+      coverImage: newCover,
+      slides: updated.slides || updatedSlides,
+      updatedAt: new Date().toISOString(),
+    };
+
+    console.log('[CoverImageTrace] handleUpdateBook passing fully merged book to persistBookUpdate:', {
+      bookId: updatedBook.id,
+      finalCoverImage: updatedBook.coverImage ? `${updatedBook.coverImage.substring(0, 50)}...` : 'none',
+      capaSlidePhoto: updatedBook.slides.find((s) => s.type === 'capa')?.photos?.[0]?.url ? `${updatedBook.slides.find((s) => s.type === 'capa')!.photos[0].url.substring(0, 50)}...` : 'none',
+    });
+
+    persistBookUpdate(updatedBook, true);
+  };
+
+  // Update current active slide in current book (with explicit coverImage sync & multi-book sync propagation)
+  const handleUpdateActiveSlide = (updated: Partial<SlideData>) => {
+    pushHistorySnapshot();
+    const baseBook = books.find((b) => b.id === currentBook.id) || currentBook;
+    const currentActiveSlide = baseBook.slides.find((s) => s.id === activeSlide.id) || activeSlide;
+
+    console.log('[CoverImageTrace] handleUpdateActiveSlide called:', {
+      slideId: currentActiveSlide.id,
+      slideType: currentActiveSlide.type,
+      currentBookCover: baseBook.coverImage ? `${baseBook.coverImage.substring(0, 50)}...` : 'none',
+      incomingPhotosCount: updated.photos?.length,
+      incomingPhoto0Url: updated.photos?.[0]?.url ? `${updated.photos[0].url.substring(0, 50)}...` : 'none',
+    });
+
+    let newCoverImage = baseBook.coverImage;
+
+    // Detect if the capa slide photo is updated
+    if (currentActiveSlide.type === 'capa') {
+      const incomingCapaUrl = updated.photos?.[0]?.url;
+      if (incomingCapaUrl) {
+        newCoverImage = incomingCapaUrl;
+        console.log('[CoverImageTrace] Capa slide photo update detected. Setting new coverImage:', `${newCoverImage.substring(0, 50)}...`);
+
+        // Update corresponding course in courses state & Firestore
+        setCourses((prev) => {
+          const up = prev.map((c) => (c.id === baseBook.courseId ? { ...c, coverImage: newCoverImage } : c));
+          const targetCourse = up.find((c) => c.id === baseBook.courseId);
+          if (targetCourse) saveCourseToFirestore(targetCourse);
+          return up;
+        });
+      }
+    }
+
+    const updatedSlides = baseBook.slides.map((s) => {
+      if (s.id === currentActiveSlide.id) {
+        const merged = { ...s, ...updated };
+        if (s.type === 'capa' && newCoverImage) {
+          const firstPhoto = merged.photos?.[0];
+          merged.photos = [
+            {
+              id: firstPhoto?.id || `cover-photo-${baseBook.courseId}`,
+              url: newCoverImage,
+              caption: firstPhoto?.caption || `Capa Oficial · ${baseBook.courseName}`,
+              fit: firstPhoto?.fit || 'cover',
+              position: firstPhoto?.position || 'center',
+              zoom: firstPhoto?.zoom || 1,
+            },
+          ];
+        }
+        return merged;
+      }
+      return s;
+    });
+
+    const updatedBook: AcademicBook = {
+      ...baseBook,
       coverImage: newCoverImage,
       slides: updatedSlides,
       updatedAt: new Date().toISOString(),
     };
-    persistBookUpdate(updatedBook, activeSlide.type === 'capa');
+
+    console.log('[CoverImageTrace] handleUpdateActiveSlide saving fully merged book:', {
+      bookId: updatedBook.id,
+      coverImage: updatedBook.coverImage ? `${updatedBook.coverImage.substring(0, 50)}...` : 'none',
+      capaSlideCover: updatedBook.slides.find((s) => s.type === 'capa')?.photos?.[0]?.url ? `${updatedBook.slides.find((s) => s.type === 'capa')!.photos[0].url.substring(0, 50)}...` : 'none',
+    });
+
+    persistBookUpdate(updatedBook, currentActiveSlide.type === 'capa');
+
+    // If this slide is synchronized across multiple books (via syncGroupId or activityId), propagate changes!
+    const syncKey = currentActiveSlide.syncGroupId || currentActiveSlide.activityId;
+    if (syncKey) {
+      setBooks((prevBooks) => {
+        return prevBooks.map((b) => {
+          if (b.id === baseBook.id) return b;
+          const matchingIndex = b.slides.findIndex(
+            (s) => (s.syncGroupId && s.syncGroupId === syncKey) || (s.activityId && s.activityId === syncKey)
+          );
+          if (matchingIndex !== -1) {
+            const syncedSlide: SlideData = {
+              ...b.slides[matchingIndex],
+              ...updated,
+              id: b.slides[matchingIndex].id,
+              order: b.slides[matchingIndex].order,
+            };
+            const updatedB: AcademicBook = {
+              ...b,
+              slides: b.slides.map((s, idx) => (idx === matchingIndex ? syncedSlide : s)),
+              updatedAt: new Date().toISOString(),
+            };
+            saveBookToFirestore(updatedB);
+            return updatedB;
+          }
+          return b;
+        });
+      });
+    }
 
     // If this slide is linked to an activity, update the activity and save it to Firestore
-    if (activeSlide.activityId) {
+    if (currentActiveSlide.activityId) {
       setActivities((prev) =>
         prev.map((act) => {
-          if (act.id !== activeSlide.activityId) return act;
+          if (act.id !== currentActiveSlide.activityId) return act;
           const updatedAct: ActivityItem = {
             ...act,
             title: updated.title !== undefined ? updated.title : act.title,
@@ -883,6 +1033,136 @@ export default function App() {
         });
       },
     });
+  };
+
+  // 9.1 DISTRIBUIÇÃO AUTOMÁTICA DE FOTOS EM NOVO SLIDE (Requisito 1)
+  const handleSplitSlidePhotos = (slideId: string) => {
+    const targetSlide = currentBook?.slides.find((s) => s.id === slideId);
+    if (!targetSlide || !targetSlide.photos || targetSlide.photos.length <= 3) return;
+
+    pushHistorySnapshot();
+    const photosToKeep = targetSlide.photos.slice(0, 3);
+    const photosToMove = targetSlide.photos.slice(3);
+
+    const updatedCurrentSlide: SlideData = {
+      ...targetSlide,
+      photos: photosToKeep,
+    };
+
+    const continuationSlide: SlideData = {
+      ...targetSlide,
+      id: `slide-cont-${Date.now()}`,
+      title: `${targetSlide.title} (Continuação)`,
+      subtitle: `${targetSlide.subtitle || ''} · Registros Adicionais`,
+      photos: photosToMove,
+      order: targetSlide.order + 1,
+    };
+
+    const currentSlideIndex = currentBook.slides.findIndex((s) => s.id === slideId);
+    const newSlides = [...currentBook.slides];
+    newSlides[currentSlideIndex] = updatedCurrentSlide;
+    newSlides.splice(currentSlideIndex + 1, 0, continuationSlide);
+    const reorderedSlides = newSlides.map((s, idx) => ({ ...s, order: idx + 1 }));
+
+    const updatedBook: AcademicBook = {
+      ...currentBook,
+      slides: reorderedSlides,
+      updatedAt: new Date().toISOString(),
+    };
+
+    persistBookUpdate(updatedBook, true);
+    setActiveSlideId(continuationSlide.id);
+  };
+
+  // 9.2 SINCRONIZAÇÃO DE SLIDE INDIVIDUAL COM OUTROS BOOKS (Requisito 4)
+  const handleOpenSyncSlideModal = (slide: SlideData) => {
+    setSyncSlideModalState({
+      isOpen: true,
+      slide,
+      sourceBook: currentBook,
+    });
+  };
+
+  const handleConfirmSyncSlide = (slideId: string, selectedBookIds: string[]) => {
+    const targetSlide = currentBook?.slides.find((s) => s.id === slideId);
+    if (!targetSlide || !currentBook) return;
+
+    pushHistorySnapshot();
+    const syncKey = targetSlide.syncGroupId || targetSlide.activityId || `sync-${Date.now()}`;
+    const allSelectedIds = Array.from(new Set(selectedBookIds));
+
+    // Update current slide
+    const updatedCurrentSlide: SlideData = {
+      ...targetSlide,
+      syncGroupId: syncKey,
+      syncedBookIds: allSelectedIds,
+      isShared: allSelectedIds.length > 1,
+    };
+
+    handleUpdateActiveSlide(updatedCurrentSlide);
+
+    // Update all destination books in books state and save to Firestore
+    setBooks((prevBooks) => {
+      const updatedList = prevBooks.map((b) => {
+        if (b.id === currentBook.id) {
+          return {
+            ...b,
+            slides: b.slides.map((s) => (s.id === slideId ? updatedCurrentSlide : s)),
+          };
+        }
+
+        const isTargeted = allSelectedIds.includes(b.id);
+        const existingSlideIndex = b.slides.findIndex(
+          (s) => (s.syncGroupId && s.syncGroupId === syncKey) || (s.activityId && s.activityId === syncKey)
+        );
+
+        if (isTargeted) {
+          // Add or update the slide in this book
+          const destinationSlide: SlideData = {
+            ...targetSlide,
+            id: existingSlideIndex !== -1 ? b.slides[existingSlideIndex].id : `slide-sync-${b.id}-${Date.now()}`,
+            syncGroupId: syncKey,
+            syncedBookIds: allSelectedIds,
+            isShared: true,
+            order: existingSlideIndex !== -1 ? b.slides[existingSlideIndex].order : b.slides.length + 1,
+          };
+
+          let newSlides = [...b.slides];
+          if (existingSlideIndex !== -1) {
+            newSlides[existingSlideIndex] = destinationSlide;
+          } else {
+            const insertIdx = Math.max(1, newSlides.length - 1);
+            newSlides.splice(insertIdx, 0, destinationSlide);
+            newSlides = newSlides.map((s, idx) => ({ ...s, order: idx + 1 }));
+          }
+
+          const updatedB: AcademicBook = { ...b, slides: newSlides, updatedAt: new Date().toISOString() };
+          saveBookToFirestore(updatedB);
+          return updatedB;
+        } else {
+          // If was previously synced and now unlinked without deleting
+          if (existingSlideIndex !== -1) {
+            const unlinkedSlide: SlideData = {
+              ...b.slides[existingSlideIndex],
+              syncGroupId: undefined,
+              syncedBookIds: [],
+              isShared: false,
+            };
+            const updatedB: AcademicBook = {
+              ...b,
+              slides: b.slides.map((s, idx) => (idx === existingSlideIndex ? unlinkedSlide : s)),
+              updatedAt: new Date().toISOString(),
+            };
+            saveBookToFirestore(updatedB);
+            return updatedB;
+          }
+          return b;
+        }
+      });
+      return updatedList;
+    });
+
+    setSyncSlideModalState({ isOpen: false, slide: null, sourceBook: null });
   };
 
   // 10. CRIAÇÃO DE CURSO COM VÍNCULO OPCIONAL & CAPA PERSONALIZADA
@@ -1340,6 +1620,7 @@ export default function App() {
             onDuplicateSlide={handleDuplicateSlide}
             onDeleteSlide={handleDeleteSlide}
             onMoveSlide={handleMoveSlide}
+            onOpenSyncSlideModal={handleOpenSyncSlideModal}
           />
 
           {/* Center Interactive WYSIWYG Slide Stage */}
@@ -1355,6 +1636,8 @@ export default function App() {
                 setDroppedImageForNewActivity(droppedImage || null);
                 setIsActivityModalOpen(true);
               }}
+              onOpenSyncSlideModal={handleOpenSyncSlideModal}
+              onSplitSlidePhotos={handleSplitSlidePhotos}
             />
           )}
         </main>
@@ -1453,6 +1736,17 @@ export default function App() {
         initialSelectedCourseIds={syncModalState.initialSelectedCourseIds}
         onConfirmSync={syncModalState.onConfirmSync}
       />
+
+      {/* MODAL: SINCRONIZAÇÃO DE SLIDE INDIVIDUAL COM OUTROS BOOKS (Requisito 4) */}
+      <SyncSlideModal
+        isOpen={syncSlideModalState.isOpen}
+        onClose={() => setSyncSlideModalState({ isOpen: false, slide: null, sourceBook: null })}
+        slide={syncSlideModalState.slide}
+        sourceBook={syncSlideModalState.sourceBook}
+        allBooks={books}
+        onConfirmSync={handleConfirmSyncSlide}
+      />
+
       {/* Toast de Notificação de Compartilhamento / Nuvem */}
       {shareToast && (
         <div className="fixed bottom-6 right-6 z-50 bg-[#001D3D] text-white px-4 py-3 rounded-xl shadow-2xl border border-[#00A3E0] flex items-center gap-2.5 text-xs animate-in fade-in slide-in-from-bottom-3 duration-200">

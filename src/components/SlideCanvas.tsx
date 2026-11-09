@@ -26,7 +26,16 @@ import {
   RotateCw,
   RotateCcw,
   Crop,
-  Sliders
+  Sliders,
+  MessageSquare,
+  Share2,
+  Split,
+  Copy,
+  AlignLeft,
+  AlignCenter,
+  AlignRight,
+  Palette,
+  Layers
 } from 'lucide-react';
 import { AcademicBook, SlideData, PhotoItem, PhotoLayout, PhotoFit, TextBoxElement, ActivityType } from '../types';
 import { CAMPUS_CONFIGS, AREA_CONFIGS } from '../data/defaults';
@@ -34,6 +43,7 @@ import { generateActivityObjective } from '../utils/aiObjective';
 import { EstacioLogo } from './EstacioLogo';
 import { getCourseCoverImage, COURSE_COVER_LIBRARY } from '../utils/courseCovers';
 import { uploadCoverImageToStorage } from '../services/storageService';
+import { computePhotoLayout, SmartCompositionPreset } from '../utils/photoLayoutEngine';
 import { Loader2 } from 'lucide-react';
 
 interface SlideCanvasProps {
@@ -43,6 +53,8 @@ interface SlideCanvasProps {
   totalSlides: number;
   onUpdateSlide: (updated: Partial<SlideData>) => void;
   onTriggerNewActivityModal?: (droppedImage?: string) => void;
+  onOpenSyncSlideModal?: (slide: SlideData) => void;
+  onSplitSlidePhotos?: (slideId: string) => void;
 }
 
 export const SlideCanvas: React.FC<SlideCanvasProps> = ({
@@ -52,6 +64,8 @@ export const SlideCanvas: React.FC<SlideCanvasProps> = ({
   totalSlides,
   onUpdateSlide,
   onTriggerNewActivityModal,
+  onOpenSyncSlideModal,
+  onSplitSlidePhotos,
 }) => {
   const [selectedElement, setSelectedElement] = useState<string | null>(null);
   const [activePhotoId, setActivePhotoId] = useState<string | null>(null);
@@ -320,23 +334,94 @@ export const SlideCanvas: React.FC<SlideCanvasProps> = ({
     }
   };
 
-  // FREE TEXT BOXES (POWERPOINT STYLE)
+  // FREE TEXT BOXES & HIGHLIGHT BALLOONS (POWERPOINT STYLE - REQUISITO 3)
   const handleAddTextBox = () => {
     const newBox: TextBoxElement = {
       id: `tb-${Date.now()}`,
-      text: 'Clique duas vezes para editar este texto',
-      x: 30,
-      y: 35,
-      width: 40,
+      text: 'Clique para editar este texto',
+      x: 35,
+      y: 40,
+      width: 35,
       fontSize: 14,
       bold: false,
       italic: false,
       align: 'left',
       color: '#0F172A',
+      backgroundColor: '#FFFFFF',
+      borderColor: '#CBD5E1',
+      borderWidth: 1,
+      borderRadius: 6,
+      padding: 8,
+      isBalloon: false,
     };
     const currentBoxes = slide.customTextBoxes || [];
     onUpdateSlide({ customTextBoxes: [...currentBoxes, newBox] });
     setSelectedTextBoxId(newBox.id);
+  };
+
+  const handleAddBalloon = () => {
+    const newBalloon: TextBoxElement = {
+      id: `balloon-${Date.now()}`,
+      text: '💡 Destaque ou observação importante da aula prática',
+      x: 40,
+      y: 30,
+      width: 32,
+      fontSize: 13,
+      bold: false,
+      italic: false,
+      align: 'left',
+      color: '#92400E',
+      backgroundColor: '#FEF3C7',
+      borderColor: '#F59E0B',
+      borderWidth: 1.5,
+      borderRadius: 10,
+      padding: 10,
+      isBalloon: true,
+      balloonPosition: 'bottom',
+    };
+    const currentBoxes = slide.customTextBoxes || [];
+    onUpdateSlide({ customTextBoxes: [...currentBoxes, newBalloon] });
+    setSelectedTextBoxId(newBalloon.id);
+  };
+
+  const handleDuplicateTextBox = (id: string) => {
+    const currentBoxes = slide.customTextBoxes || [];
+    const source = currentBoxes.find((b) => b.id === id);
+    if (!source) return;
+    const duplicated: TextBoxElement = {
+      ...source,
+      id: `tb-dup-${Date.now()}`,
+      x: Math.min(80, source.x + 3),
+      y: Math.min(80, source.y + 4),
+    };
+    onUpdateSlide({ customTextBoxes: [...currentBoxes, duplicated] });
+    setSelectedTextBoxId(duplicated.id);
+  };
+
+  const handleConvertToFloatingBalloon = (title: string, text: string) => {
+    if (!text) return;
+    const newBalloon: TextBoxElement = {
+      id: `balloon-conv-${Date.now()}`,
+      text: `${title}: ${text}`,
+      x: 25,
+      y: 35,
+      width: 45,
+      fontSize: 13,
+      bold: false,
+      italic: false,
+      align: 'left',
+      color: '#004B8D',
+      backgroundColor: '#F0F9FF',
+      borderColor: '#00A3E0',
+      borderWidth: 1.5,
+      borderRadius: 8,
+      padding: 10,
+      isBalloon: true,
+      balloonPosition: 'bottom',
+    };
+    const currentBoxes = slide.customTextBoxes || [];
+    onUpdateSlide({ customTextBoxes: [...currentBoxes, newBalloon] });
+    setSelectedTextBoxId(newBalloon.id);
   };
 
   const handleUpdateTextBox = (id: string, updatedProps: Partial<TextBoxElement>) => {
@@ -363,25 +448,49 @@ export const SlideCanvas: React.FC<SlideCanvasProps> = ({
     };
   };
 
+  // Resizing text box width
+  const [resizingBoxId, setResizingBoxId] = useState<string | null>(null);
+  const resizeBoxStartRef = useRef<{ mouseX: number; initWidth: number } | null>(null);
+
+  const startResizeBox = (e: React.MouseEvent, box: TextBoxElement) => {
+    e.stopPropagation();
+    setResizingBoxId(box.id);
+    resizeBoxStartRef.current = {
+      mouseX: e.clientX,
+      initWidth: box.width,
+    };
+  };
+
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
-      if (!draggingBoxId || !dragStartPos.current || !canvasRef.current) return;
+      if (!canvasRef.current) return;
       const rect = canvasRef.current.getBoundingClientRect();
-      const deltaXPercent = ((e.clientX - dragStartPos.current.mouseX) / rect.width) * 100;
-      const deltaYPercent = ((e.clientY - dragStartPos.current.mouseY) / rect.height) * 100;
 
-      const newX = Math.max(2, Math.min(85, dragStartPos.current.boxX + deltaXPercent));
-      const newY = Math.max(5, Math.min(85, dragStartPos.current.boxY + deltaYPercent));
+      if (draggingBoxId && dragStartPos.current) {
+        const deltaXPercent = ((e.clientX - dragStartPos.current.mouseX) / rect.width) * 100;
+        const deltaYPercent = ((e.clientY - dragStartPos.current.mouseY) / rect.height) * 100;
 
-      handleUpdateTextBox(draggingBoxId, { x: Math.round(newX), y: Math.round(newY) });
+        const newX = Math.max(2, Math.min(85, dragStartPos.current.boxX + deltaXPercent));
+        const newY = Math.max(5, Math.min(85, dragStartPos.current.boxY + deltaYPercent));
+
+        handleUpdateTextBox(draggingBoxId, { x: Math.round(newX), y: Math.round(newY) });
+      }
+
+      if (resizingBoxId && resizeBoxStartRef.current) {
+        const deltaWPercent = ((e.clientX - resizeBoxStartRef.current.mouseX) / rect.width) * 100;
+        const newW = Math.max(15, Math.min(85, resizeBoxStartRef.current.initWidth + deltaWPercent));
+        handleUpdateTextBox(resizingBoxId, { width: Math.round(newW) });
+      }
     };
 
     const handleMouseUp = () => {
       setDraggingBoxId(null);
       dragStartPos.current = null;
+      setResizingBoxId(null);
+      resizeBoxStartRef.current = null;
     };
 
-    if (draggingBoxId) {
+    if (draggingBoxId || resizingBoxId) {
       window.addEventListener('mousemove', handleMouseMove);
       window.addEventListener('mouseup', handleMouseUp);
     }
@@ -389,7 +498,7 @@ export const SlideCanvas: React.FC<SlideCanvasProps> = ({
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('mouseup', handleMouseUp);
     };
-  }, [draggingBoxId]);
+  }, [draggingBoxId, resizingBoxId]);
 
   return (
     <div
@@ -418,44 +527,76 @@ export const SlideCanvas: React.FC<SlideCanvasProps> = ({
 
           {slide.type === 'evidencia' && (
             <div className="hidden sm:flex items-center gap-1 bg-slate-100 p-0.5 rounded-md ml-2">
+              <span className="text-[10px] font-bold text-slate-400 uppercase px-1">Layout:</span>
               <button
                 onClick={(e) => {
                   e.stopPropagation();
-                  onUpdateSlide({ photoLayout: 'single' });
+                  onUpdateSlide({ photoLayout: 'auto' });
                 }}
+                title="Composição fotográfica adaptativa inteligente (proporcional, sem distorção)"
                 className={`px-2 py-0.5 rounded text-[11px] font-medium transition-colors ${
-                  (slide.photoLayout || 'single') === 'single'
+                  !slide.photoLayout || slide.photoLayout === 'auto'
                     ? 'bg-white text-[#004B8D] font-bold shadow-2xs'
-                    : 'text-slate-600'
+                    : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
-                1 Foto
+                Auto ✨
               </button>
               <button
                 onClick={(e) => {
                   e.stopPropagation();
-                  onUpdateSlide({ photoLayout: 'split-50-50' });
+                  onUpdateSlide({ photoLayout: 'editorial' });
                 }}
+                title="Composição Editorial (1 foto principal em destaque + secundárias)"
                 className={`px-2 py-0.5 rounded text-[11px] font-medium transition-colors ${
-                  slide.photoLayout === 'split-50-50'
+                  slide.photoLayout === 'editorial'
                     ? 'bg-white text-[#004B8D] font-bold shadow-2xs'
-                    : 'text-slate-600'
+                    : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
-                50/50
+                Editorial
               </button>
               <button
                 onClick={(e) => {
                   e.stopPropagation();
-                  onUpdateSlide({ photoLayout: 'grid-3' });
+                  onUpdateSlide({ photoLayout: 'side-by-side' });
                 }}
+                title="Colunas Lado a Lado proporcionais"
                 className={`px-2 py-0.5 rounded text-[11px] font-medium transition-colors ${
-                  slide.photoLayout === 'grid-3'
+                  slide.photoLayout === 'side-by-side' || slide.photoLayout === 'split-50-50'
                     ? 'bg-white text-[#004B8D] font-bold shadow-2xs'
-                    : 'text-slate-600'
+                    : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
-                Grade 3
+                Lado a Lado
+              </button>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onUpdateSlide({ photoLayout: 'stacked' });
+                }}
+                title="Fotos empilhadas horizontalmente"
+                className={`px-2 py-0.5 rounded text-[11px] font-medium transition-colors ${
+                  slide.photoLayout === 'stacked'
+                    ? 'bg-white text-[#004B8D] font-bold shadow-2xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                Empilhado
+              </button>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onUpdateSlide({ photoLayout: 'grid' });
+                }}
+                title="Grade balanceada 2x2 ou mosaico"
+                className={`px-2 py-0.5 rounded text-[11px] font-medium transition-colors ${
+                  slide.photoLayout === 'grid' || slide.photoLayout === 'grid-3'
+                    ? 'bg-white text-[#004B8D] font-bold shadow-2xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                Grade
               </button>
             </div>
           )}
@@ -463,6 +604,25 @@ export const SlideCanvas: React.FC<SlideCanvasProps> = ({
 
         {/* Action buttons on canvas */}
         <div className="flex items-center gap-1.5">
+          {/* Synchronize Slide with other books (Requisito 4) */}
+          {onOpenSyncSlideModal && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onOpenSyncSlideModal(slide);
+              }}
+              title="Sincronizar este slide com outros books de evidências da instituição"
+              className={`inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-semibold border transition-colors ${
+                slide.isShared || (slide.syncedBookIds && slide.syncedBookIds.length > 0)
+                  ? 'bg-sky-50 text-[#00A3E0] border-sky-300 font-bold'
+                  : 'bg-white hover:bg-slate-50 text-slate-700 border-slate-300'
+              }`}
+            >
+              <Share2 className="w-3.5 h-3.5 text-[#00A3E0]" />
+              <span>{slide.isShared ? 'Sincronizado' : 'Sincronizar'}</span>
+            </button>
+          )}
+
           {/* Add Free Text Box button */}
           <button
             onClick={(e) => {
@@ -473,7 +633,20 @@ export const SlideCanvas: React.FC<SlideCanvasProps> = ({
             className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-slate-100 hover:bg-slate-200 text-slate-800 font-semibold transition-colors"
           >
             <Type className="w-3.5 h-3.5 text-[#004B8D]" />
-            <span>+ Caixa de Texto</span>
+            <span>+ Texto</span>
+          </button>
+
+          {/* Add Balloon button (Requisito 3) */}
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              handleAddBalloon();
+            }}
+            title="Criar balão de destaque ou etiqueta (com cauda e formato editável)"
+            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200 font-semibold transition-colors"
+          >
+            <MessageSquare className="w-3.5 h-3.5 text-amber-600" />
+            <span>+ Balão</span>
           </button>
 
           {/* Insert Photo button */}
@@ -910,15 +1083,25 @@ export const SlideCanvas: React.FC<SlideCanvasProps> = ({
                     <span className="text-[10px] uppercase font-bold text-[#004B8D] tracking-wider">
                       Objetivo da Atividade
                     </span>
-                    <button
-                      onClick={handleRegenerateObjective}
-                      disabled={isGeneratingAI}
-                      title="Gerar novo objetivo institucional com IA"
-                      className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-sky-100 hover:bg-sky-200 text-[#004B8D] text-[10px] font-bold transition-colors"
-                    >
-                      <RefreshCw className={`w-3 h-3 ${isGeneratingAI ? 'animate-spin' : ''}`} />
-                      <span>✨ Gerar</span>
-                    </button>
+                    <div className="flex items-center gap-1">
+                      <button
+                        onClick={() => handleConvertToFloatingBalloon('Objetivo', slide.objective || slide.evidenceMeta?.actionsReport || '')}
+                        title="Destacar este objetivo como balão livre no slide"
+                        className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-amber-50 hover:bg-amber-100 text-amber-800 text-[10px] font-semibold transition-colors border border-amber-200"
+                      >
+                        <MessageSquare className="w-2.5 h-2.5 text-amber-600" />
+                        <span>Balão</span>
+                      </button>
+                      <button
+                        onClick={handleRegenerateObjective}
+                        disabled={isGeneratingAI}
+                        title="Gerar novo objetivo institucional com IA"
+                        className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-sky-100 hover:bg-sky-200 text-[#004B8D] text-[10px] font-bold transition-colors"
+                      >
+                        <RefreshCw className={`w-3 h-3 ${isGeneratingAI ? 'animate-spin' : ''}`} />
+                        <span>✨ Gerar</span>
+                      </button>
+                    </div>
                   </div>
 
                   <textarea
@@ -939,9 +1122,19 @@ export const SlideCanvas: React.FC<SlideCanvasProps> = ({
                 </div>
 
                 <div className="pt-2 border-t border-slate-200 mt-2 shrink-0">
-                  <span className="text-[9px] uppercase font-bold text-slate-400 block mb-0.5">
-                    Observações complementares (opcional):
-                  </span>
+                  <div className="flex items-center justify-between mb-0.5">
+                    <span className="text-[9px] uppercase font-bold text-slate-400 block">
+                      Observações complementares (opcional):
+                    </span>
+                    <button
+                      onClick={() => handleConvertToFloatingBalloon('Observação', slide.customText1 || slide.evidenceMeta?.pedagogicalImpact || '')}
+                      title="Destacar observações como balão livre"
+                      className="text-[9px] text-amber-700 hover:underline flex items-center gap-0.5"
+                    >
+                      <MessageSquare className="w-2.5 h-2.5 text-amber-600" />
+                      <span>Converter balão</span>
+                    </button>
+                  </div>
                   <input
                     type="text"
                     value={slide.customText1 || slide.evidenceMeta?.pedagogicalImpact || ''}
@@ -982,18 +1175,29 @@ export const SlideCanvas: React.FC<SlideCanvasProps> = ({
                     </span>
                   </div>
                 ) : (
-                  /* Photos Grid with Reordering & Replacement */
+                  /* Photos Dynamic Composition with Reordering & Replacement (Requisitos 1 e 2) */
                   <div className="w-full h-full flex flex-col justify-between min-h-0">
-                    <div
-                      className={`grid gap-2 h-full min-h-0 ${
-                        slide.photoLayout === 'split-50-50' || slide.photos.length === 2
-                          ? 'grid-rows-2'
-                          : slide.photoLayout === 'grid-3' || slide.photos.length >= 3
-                          ? 'grid-cols-2 grid-rows-2'
-                          : 'grid-cols-1'
-                      }`}
-                    >
-                      {slide.photos.map((photo, pIdx) => {
+                    {/* Prompt to split slide if > 3 photos */}
+                    {slide.photos.length > 3 && onSplitSlidePhotos && (
+                      <div className="mb-2 px-2.5 py-1 bg-sky-50 border border-sky-200 rounded-md flex items-center justify-between text-[11px] text-[#004B8D] shrink-0">
+                        <div className="flex items-center gap-1.5 truncate">
+                          <Split className="w-3.5 h-3.5 text-[#00A3E0] shrink-0" />
+                          <span className="truncate"><b>{slide.photos.length} fotos</b> no slide. Deseja distribuir o excesso?</span>
+                        </div>
+                        <button
+                          onClick={() => onSplitSlidePhotos(slide.id)}
+                          className="px-2 py-0.5 bg-[#004B8D] hover:bg-[#00386B] text-white font-bold rounded text-[10px] transition-colors shrink-0 shadow-2xs ml-1"
+                        >
+                          Dividir Fotos
+                        </button>
+                      </div>
+                    )}
+
+                    {/* Intelligent Layout Composition Stage */}
+                    <div className="relative w-full flex-1 min-h-0">
+                      {computePhotoLayout(slide.photos, (slide.photoLayout as SmartCompositionPreset) || 'auto').map((frame) => {
+                        const photo = frame.photo;
+                        const pIdx = frame.index;
                         const isSelected = activePhotoId === photo.id;
                         return (
                           <div
@@ -1004,9 +1208,13 @@ export const SlideCanvas: React.FC<SlideCanvasProps> = ({
                               setSelectedTextBoxId(null);
                             }}
                             style={{
-                              aspectRatio: photo.aspectRatio === '16/9' ? '16/9' : photo.aspectRatio === '4/3' ? '4/3' : photo.aspectRatio === '1/1' ? '1/1' : undefined,
+                              position: 'absolute',
+                              left: `${frame.leftPercent}%`,
+                              top: `${frame.topPercent}%`,
+                              width: `${frame.widthPercent}%`,
+                              height: `${frame.heightPercent}%`,
                             }}
-                            className={`relative rounded-lg overflow-visible bg-slate-100 flex flex-col justify-between border transition-all ${
+                            className={`rounded-lg overflow-visible bg-slate-100 flex flex-col justify-between border transition-all ${
                               isSelected
                                 ? 'border-[#00A3E0] ring-2 ring-[#00A3E0] shadow-md z-30'
                                 : 'border-slate-200 hover:border-slate-300'
@@ -1096,10 +1304,10 @@ export const SlideCanvas: React.FC<SlideCanvasProps> = ({
                                   }}
                                   title="Alternar Preencher (cortar bordas) ou Ajustar (mostrar inteira)"
                                   className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
-                                    photo.fit === 'contain' ? 'bg-[#00A3E0] text-slate-900' : 'bg-white/10 text-white'
+                                    (photo.fit || frame.fit) === 'contain' ? 'bg-[#00A3E0] text-slate-900' : 'bg-white/10 text-white'
                                   }`}
                                 >
-                                  {photo.fit === 'contain' ? 'Ajustado' : 'Preenchido'}
+                                  {(photo.fit || frame.fit) === 'contain' ? 'Ajustado' : 'Preenchido'}
                                 </button>
                                 <span className="text-white/20">|</span>
 
@@ -1172,7 +1380,7 @@ export const SlideCanvas: React.FC<SlideCanvasProps> = ({
                             {/* Image Canvas Frame with Pan Dragging */}
                             <div
                               onMouseDown={(e) => handleStartPhotoPan(e, photo)}
-                              className={`relative w-full h-full min-h-[170px] overflow-hidden bg-slate-900/5 select-none rounded-t-lg ${
+                              className={`relative w-full flex-1 min-h-0 overflow-hidden bg-slate-900/5 select-none rounded-t-lg ${
                                 isSelected ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer'
                               }`}
                             >
@@ -1181,7 +1389,7 @@ export const SlideCanvas: React.FC<SlideCanvasProps> = ({
                                 alt={photo.caption || 'Foto'}
                                 draggable={false}
                                 className={`w-full h-full pointer-events-none transition-transform duration-75 select-none ${
-                                  photo.fit === 'contain' ? 'object-contain' : 'object-cover'
+                                  (photo.fit || frame.fit) === 'contain' ? 'object-contain' : 'object-cover'
                                 }`}
                                 style={{
                                   transform: `scale(${(photo.zoom || 1) * (photo.scale || 1)}) translate(${photo.x || 0}%, ${photo.y || 0}%) rotate(${photo.rotation || 0}deg)`,
@@ -1234,7 +1442,7 @@ export const SlideCanvas: React.FC<SlideCanvasProps> = ({
                             </div>
 
                             {/* Caption input */}
-                            <div className="p-1 bg-white border-t border-slate-100 rounded-b-lg">
+                            <div className="p-1 bg-white border-t border-slate-100 rounded-b-lg shrink-0">
                               <input
                                 type="text"
                                 value={photo.caption || ''}
@@ -1750,68 +1958,206 @@ export const SlideCanvas: React.FC<SlideCanvasProps> = ({
             </div>
           )}
 
-        {/* CUSTOM FREE TEXT BOXES (POWERPOINT STYLE MOVABLE & RESIZABLE) */}
+        {/* CUSTOM FREE TEXT BOXES & HIGHLIGHT BALLOONS (REQUISITO 3 - EDIÇÃO TOTAL E LIVRE) */}
         {(slide.customTextBoxes || []).map((box) => {
           const isSelected = selectedTextBoxId === box.id;
+          const bgCol = box.backgroundColor || (box.isBalloon ? '#FEF3C7' : 'transparent');
+          const borderCol = box.borderColor || (box.isBalloon ? '#F59E0B' : 'transparent');
+          const borderW = box.borderWidth !== undefined ? box.borderWidth : (box.isBalloon ? 1.5 : 0);
+          const borderR = box.borderRadius !== undefined ? box.borderRadius : (box.isBalloon ? 10 : 6);
+
           return (
             <div
               key={box.id}
               onClick={(e) => {
                 e.stopPropagation();
                 setSelectedTextBoxId(box.id);
+                setActivePhotoId(null);
               }}
               style={{
                 left: `${box.x}%`,
                 top: `${box.y}%`,
                 width: `${box.width}%`,
+                backgroundColor: bgCol,
+                borderColor: borderCol,
+                borderWidth: `${borderW}px`,
+                borderStyle: borderW > 0 ? 'solid' : 'none',
+                borderRadius: `${borderR}px`,
+                padding: `${box.padding || 8}px`,
               }}
-              className={`absolute cursor-move z-30 transition-shadow ${
+              className={`absolute cursor-move z-35 transition-all select-none ${
                 isSelected
-                  ? 'ring-2 ring-[#00A3E0] bg-white/95 rounded p-1 shadow-md'
-                  : 'hover:ring-1 hover:ring-slate-300 rounded p-1'
+                  ? 'ring-2 ring-[#00A3E0] shadow-lg'
+                  : 'hover:ring-1 hover:ring-slate-400 shadow-2xs'
               }`}
             >
-              {/* Drag handle & actions toolbar when selected */}
+              {/* Balloon tail indicator if isBalloon is true */}
+              {box.isBalloon && (
+                <div
+                  style={{
+                    backgroundColor: bgCol,
+                    borderColor: borderCol,
+                    borderBottomWidth: `${borderW}px`,
+                    borderRightWidth: `${borderW}px`,
+                  }}
+                  className="absolute -bottom-1.5 left-5 w-3 h-3 rotate-45 pointer-events-none"
+                />
+              )}
+
+              {/* FLOATING FORMATTING TOOLBAR WHEN SELECTED */}
               {isSelected && (
-                <div className="absolute -top-7 left-0 flex items-center gap-1 bg-[#001D3D] text-white px-2 py-0.5 rounded text-[10px] font-mono shadow-xs z-40">
+                <div
+                  onClick={(e) => e.stopPropagation()}
+                  className="no-print absolute -top-10 left-0 flex items-center gap-1.5 bg-[#001D3D] text-white px-2.5 py-1 rounded-lg text-[10px] font-sans shadow-2xl border border-white/20 z-50 whitespace-nowrap animate-in fade-in zoom-in-95 duration-100"
+                >
+                  {/* Drag Handle */}
                   <span
                     onMouseDown={(e) => startDragBox(e, box)}
-                    className="cursor-grab flex items-center gap-1"
+                    className="cursor-grab active:cursor-grabbing flex items-center gap-1 text-[#00A3E0] font-bold hover:bg-white/10 px-1 py-0.5 rounded transition-colors"
+                    title="Clique e arraste para reposicionar livremente no slide"
                   >
-                    <Move className="w-3 h-3 text-[#00A3E0]" />
+                    <Move className="w-3.5 h-3.5" />
                     <span>Mover</span>
                   </span>
-                  <span className="text-white/30">|</span>
+                  <span className="text-white/20">|</span>
+
+                  {/* Font Size Selector */}
+                  <select
+                    value={box.fontSize || 14}
+                    onChange={(e) => handleUpdateTextBox(box.id, { fontSize: Number(e.target.value) })}
+                    className="bg-black/40 border border-white/20 rounded px-1 py-0.5 text-white font-mono text-[10px] focus:outline-hidden"
+                    title="Tamanho da fonte"
+                  >
+                    <option value="10" className="text-black">10px</option>
+                    <option value="12" className="text-black">12px</option>
+                    <option value="13" className="text-black">13px</option>
+                    <option value="14" className="text-black">14px</option>
+                    <option value="16" className="text-black">16px</option>
+                    <option value="18" className="text-black">18px</option>
+                    <option value="20" className="text-black">20px</option>
+                    <option value="24" className="text-black">24px</option>
+                  </select>
+
+                  {/* Bold & Italic */}
                   <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleUpdateTextBox(box.id, { bold: !box.bold });
-                    }}
-                    className={`px-1 rounded ${box.bold ? 'bg-[#00A3E0] text-black font-bold' : ''}`}
+                    onClick={() => handleUpdateTextBox(box.id, { bold: !box.bold })}
+                    title="Negrito"
+                    className={`px-1.5 py-0.5 rounded font-bold ${box.bold ? 'bg-[#00A3E0] text-black' : 'hover:bg-white/10 text-white'}`}
                   >
                     B
                   </button>
                   <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleUpdateTextBox(box.id, { italic: !box.italic });
-                    }}
-                    className={`px-1 rounded ${box.italic ? 'bg-[#00A3E0] text-black italic' : ''}`}
+                    onClick={() => handleUpdateTextBox(box.id, { italic: !box.italic })}
+                    title="Itálico"
+                    className={`px-1.5 py-0.5 rounded italic ${box.italic ? 'bg-[#00A3E0] text-black' : 'hover:bg-white/10 text-white'}`}
                   >
                     I
                   </button>
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleDeleteTextBox(box.id);
-                    }}
-                    className="text-red-400 hover:text-red-300 ml-1"
+
+                  {/* Text Alignment */}
+                  <div className="flex items-center gap-0.5">
+                    <button
+                      onClick={() => handleUpdateTextBox(box.id, { align: 'left' })}
+                      title="Alinhar à esquerda"
+                      className={`p-1 rounded ${(box.align || 'left') === 'left' ? 'bg-[#00A3E0] text-black' : 'hover:bg-white/10 text-slate-300'}`}
+                    >
+                      <AlignLeft className="w-3 h-3" />
+                    </button>
+                    <button
+                      onClick={() => handleUpdateTextBox(box.id, { align: 'center' })}
+                      title="Centralizar"
+                      className={`p-1 rounded ${box.align === 'center' ? 'bg-[#00A3E0] text-black' : 'hover:bg-white/10 text-slate-300'}`}
+                    >
+                      <AlignCenter className="w-3 h-3" />
+                    </button>
+                    <button
+                      onClick={() => handleUpdateTextBox(box.id, { align: 'right' })}
+                      title="Alinhar à direita"
+                      className={`p-1 rounded ${box.align === 'right' ? 'bg-[#00A3E0] text-black' : 'hover:bg-white/10 text-slate-300'}`}
+                    >
+                      <AlignRight className="w-3 h-3" />
+                    </button>
+                  </div>
+                  <span className="text-white/20">|</span>
+
+                  {/* Text Color Dropdown / Presets */}
+                  <select
+                    value={box.color || '#0F172A'}
+                    onChange={(e) => handleUpdateTextBox(box.id, { color: e.target.value })}
+                    className="bg-black/40 border border-white/20 rounded px-1 py-0.5 text-white text-[10px] focus:outline-hidden"
+                    title="Cor do Texto"
                   >
-                    <Trash2 className="w-3 h-3" />
+                    <option value="#0F172A" className="text-black">Preto / Escuro</option>
+                    <option value="#004B8D" className="text-black">Azul Estácio</option>
+                    <option value="#00A3E0" className="text-black">Ciano</option>
+                    <option value="#D97706" className="text-black">Âmbar</option>
+                    <option value="#DC2626" className="text-black">Vermelho</option>
+                    <option value="#059669" className="text-black">Verde</option>
+                    <option value="#FFFFFF" className="text-black">Branco</option>
+                  </select>
+
+                  {/* Background Color Presets */}
+                  <select
+                    value={box.backgroundColor || 'transparent'}
+                    onChange={(e) => handleUpdateTextBox(box.id, { backgroundColor: e.target.value })}
+                    className="bg-black/40 border border-white/20 rounded px-1 py-0.5 text-white text-[10px] focus:outline-hidden"
+                    title="Cor de Fundo"
+                  >
+                    <option value="transparent" className="text-black">Fundo Transparente</option>
+                    <option value="#FFFFFF" className="text-black">Branco</option>
+                    <option value="#FEF3C7" className="text-black">Amarelo / Destaque</option>
+                    <option value="#E0F2FE" className="text-black">Azul Claro</option>
+                    <option value="#DCFCE7" className="text-black">Verde Claro</option>
+                    <option value="#F1F5F9" className="text-black">Cinza Claro</option>
+                    <option value="#001D3D" className="text-black">Azul Marinho</option>
+                  </select>
+
+                  {/* Balloon Style Toggle */}
+                  <button
+                    onClick={() => handleUpdateTextBox(box.id, { 
+                      isBalloon: !box.isBalloon,
+                      backgroundColor: !box.isBalloon && (!box.backgroundColor || box.backgroundColor === 'transparent') ? '#FEF3C7' : box.backgroundColor,
+                      borderColor: !box.isBalloon && (!box.borderColor || box.borderColor === 'transparent') ? '#F59E0B' : box.borderColor,
+                      borderWidth: !box.isBalloon && (!box.borderWidth || box.borderWidth === 0) ? 1.5 : box.borderWidth,
+                    })}
+                    title="Alternar estilo Balão de Fala"
+                    className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-semibold ${box.isBalloon ? 'bg-amber-400 text-black font-bold' : 'hover:bg-white/10 text-amber-300'}`}
+                  >
+                    <MessageSquare className="w-3 h-3" />
+                    <span>Balão</span>
+                  </button>
+                  <span className="text-white/20">|</span>
+
+                  {/* Duplicate Button */}
+                  <button
+                    onClick={() => handleDuplicateTextBox(box.id)}
+                    title="Duplicar elemento"
+                    className="p-1 hover:bg-white/10 rounded text-sky-400 hover:text-white"
+                  >
+                    <Copy className="w-3.5 h-3.5" />
+                  </button>
+
+                  {/* Delete Button */}
+                  <button
+                    onClick={() => handleDeleteTextBox(box.id)}
+                    title="Excluir elemento"
+                    className="p-1 hover:bg-red-600 rounded text-red-400 hover:text-white"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
                   </button>
                 </div>
               )}
 
+              {/* Right edge resize handle */}
+              {isSelected && (
+                <div
+                  onMouseDown={(e) => startResizeBox(e, box)}
+                  title="Arraste para redimensionar a largura"
+                  className="no-print absolute -right-1 top-0 bottom-0 w-2.5 cursor-ew-resize hover:bg-[#00A3E0]/40 rounded-r z-40 transition-colors"
+                />
+              )}
+
+              {/* Editable Text Area */}
               <textarea
                 value={box.text}
                 onChange={(e) => handleUpdateTextBox(box.id, { text: e.target.value })}
@@ -1823,7 +2169,7 @@ export const SlideCanvas: React.FC<SlideCanvasProps> = ({
                   textAlign: box.align || 'left',
                 }}
                 className="w-full bg-transparent border-none focus:outline-hidden resize-none leading-relaxed"
-                rows={2}
+                rows={Math.max(1, Math.min(6, Math.ceil((box.text?.length || 1) / 35)))}
               />
             </div>
           );

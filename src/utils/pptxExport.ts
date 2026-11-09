@@ -3,7 +3,13 @@ import confetti from 'canvas-confetti';
 import { AcademicBook, SlideData, PhotoItem } from '../types';
 import { CAMPUS_CONFIGS, AREA_CONFIGS } from '../data/defaults';
 import { getCourseCoverImage } from './courseCovers';
+import { computePhotoLayout } from './photoLayoutEngine';
 import estacioLogoOfficial from '../assets/images/estacio_logo_oficial.png';
+
+function cleanColorHex(colorStr?: string, defaultColor: string = '000000'): string {
+  if (!colorStr || colorStr === 'transparent') return defaultColor;
+  return colorStr.replace('#', '').trim();
+}
 
 /**
  * Converts image URL (local asset, remote URL, or blob) to base64 Data URI
@@ -945,114 +951,101 @@ export async function exportToPowerPoint(book: AcademicBook): Promise<void> {
           });
         }
 
-        // Render photo(s) in EXACT user ordered sequence
-        const layout = s.photoLayout || (photos.length > 1 ? 'split-50-50' : 'single');
+        // Intelligent Photo Layout Composition (REQUISITOS 1, 2, 5 E 6)
+        // Consome a mesma matemática de proporção e posicionamento usada no editor
+        const photoFrames = computePhotoLayout(photos, (s.photoLayout as any) || 'auto');
+        const photoStageH = 3.35; // Altura total disponível em polegadas (16:9)
 
-        if (layout === 'single' || photos.length === 1) {
-          const p = photos[0];
-          const dataUri = await toDataUri(p.url);
-          if (dataUri) {
-            slide.addImage({
-              data: dataUri,
-              x: photoColX,
-              y: 1.55,
-              w: photoColW,
-              h: 3.1,
-              sizing: { type: p.fit === 'contain' ? 'contain' : 'cover', w: photoColW, h: 3.1 },
-            });
-          }
+        for (let pi = 0; pi < photoFrames.length; pi++) {
+          const frame = photoFrames[pi];
+          const p = frame.photo;
+          const pUri = await toDataUri(p.url);
+          if (!pUri) continue;
+
+          // Cálculo proporcional idêntico ao viewport do editor
+          const frameX = Number((photoColX + (frame.leftPercent / 100) * photoColW).toFixed(2));
+          const frameY = Number((1.55 + (frame.topPercent / 100) * photoStageH).toFixed(2));
+          const frameW = Number(((frame.widthPercent / 100) * photoColW).toFixed(2));
+          const frameH = Number(((frame.heightPercent / 100) * photoStageH).toFixed(2));
+
+          const fitMode = (p.fit || frame.fit) === 'contain' ? 'contain' : 'cover';
+
+          // Adiciona a imagem respeitando estritamente a proporção original sem esticar
+          slide.addImage({
+            data: pUri,
+            x: frameX,
+            y: frameY,
+            w: frameW,
+            h: frameH,
+            sizing: {
+              type: fitMode,
+              w: frameW,
+              h: frameH,
+            },
+          });
+
+          // Legenda da foto se informada
           if (p.caption) {
             slide.addText(p.caption, {
-              x: photoColX,
-              y: 4.7,
-              w: photoColW,
-              h: 0.25,
-              fontSize: 7.5,
+              x: frameX,
+              y: Math.min(5.1, frameY + frameH - 0.22),
+              w: frameW,
+              h: 0.2,
+              fontSize: 6.5,
               color: textMuted,
               italic: true,
               fontFace: 'Arial',
+              align: 'center',
             });
-          }
-        } else if (layout === 'split-50-50' || photos.length === 2) {
-          const p1 = photos[0];
-          const p2 = photos[1];
-          const p1Uri = await toDataUri(p1.url);
-          const p2Uri = await toDataUri(p2.url);
-
-          const itemH = 1.45;
-          if (p1Uri) {
-            slide.addImage({
-              data: p1Uri,
-              x: photoColX,
-              y: 1.55,
-              w: photoColW,
-              h: itemH,
-              sizing: { type: p1.fit === 'contain' ? 'contain' : 'cover', w: photoColW, h: itemH },
-            });
-          }
-          if (p2Uri) {
-            slide.addImage({
-              data: p2Uri,
-              x: photoColX,
-              y: 3.2,
-              w: photoColW,
-              h: itemH,
-              sizing: { type: p2.fit === 'contain' ? 'contain' : 'cover', w: photoColW, h: itemH },
-            });
-          }
-          if (p1.caption || p2.caption) {
-            slide.addText(`${p1.caption || ''} · ${p2.caption || ''}`, {
-              x: photoColX,
-              y: 4.72,
-              w: photoColW,
-              h: 0.25,
-              fontSize: 7,
-              color: textMuted,
-              italic: true,
-              fontFace: 'Arial',
-            });
-          }
-        } else {
-          // Grid / Gallery fallback
-          const gridW = 2.22;
-          const gridH = 1.45;
-          for (let pi = 0; pi < Math.min(photos.length, 4); pi++) {
-            const p = photos[pi];
-            const pUri = await toDataUri(p.url);
-            const gx = photoColX + (pi % 2) * (gridW + 0.16);
-            const gy = 1.55 + Math.floor(pi / 2) * (gridH + 0.15);
-            if (pUri) {
-              slide.addImage({
-                data: pUri,
-                x: gx,
-                y: gy,
-                w: gridW,
-                h: gridH,
-                sizing: { type: p.fit === 'contain' ? 'contain' : 'cover', w: gridW, h: gridH },
-              });
-            }
           }
         }
       }
 
-      // Render custom free text boxes if added by user
+      // Render custom free text boxes & balloons with exact styling (REQUISITO 3)
       if (s.customTextBoxes && s.customTextBoxes.length > 0) {
         s.customTextBoxes.forEach((tb) => {
           // tb.x and tb.y are percentages (0 - 100), slide is 10 x 5.625 inches
-          const tbX = Math.max(0.5, Math.min(9.5, (tb.x / 100) * 10));
-          const tbY = Math.max(0.5, Math.min(5.0, (tb.y / 100) * 5.625));
-          const tbW = Math.max(1.5, Math.min(8.0, (tb.width / 100) * 10));
+          const tbX = Math.max(0.4, Math.min(9.4, Number(((tb.x / 100) * 10).toFixed(2))));
+          const tbY = Math.max(0.4, Math.min(5.0, Number(((tb.y / 100) * 5.625).toFixed(2))));
+          const tbW = Math.max(1.2, Math.min(8.0, Number(((tb.width / 100) * 10).toFixed(2))));
+          const tbH = Math.max(0.6, Math.min(2.5, 0.4 + Math.ceil((tb.text?.length || 1) / 35) * 0.22));
+
+          const hasBg = tb.backgroundColor && tb.backgroundColor !== 'transparent';
+          const hasBorder = (tb.borderWidth && tb.borderWidth > 0) || tb.isBalloon;
+
+          // Se tiver fundo ou borda ou for balão de fala, desenha o retângulo arredondado do balão
+          if (hasBg || hasBorder || tb.isBalloon) {
+            const bgFill = tb.backgroundColor && tb.backgroundColor !== 'transparent'
+              ? cleanColorHex(tb.backgroundColor, 'FEF3C7')
+              : (tb.isBalloon ? 'FEF3C7' : 'FFFFFF');
+
+            const lineBorder = tb.borderColor && tb.borderColor !== 'transparent'
+              ? cleanColorHex(tb.borderColor, 'F59E0B')
+              : (tb.isBalloon ? 'F59E0B' : 'CBD5E1');
+
+            slide.addShape(pres.ShapeType.roundRect, {
+              x: tbX,
+              y: tbY,
+              w: tbW,
+              h: tbH,
+              fill: { color: bgFill },
+              line: { color: lineBorder, width: tb.borderWidth || (tb.isBalloon ? 1.5 : 1) },
+              rectRadius: tb.isBalloon ? 0.12 : 0.06,
+            });
+          }
+
           slide.addText(tb.text, {
-            x: tbX,
-            y: tbY,
-            w: tbW,
-            h: 0.8,
-            fontSize: tb.fontSize ? Math.round(tb.fontSize * 0.7) : 10,
-            bold: tb.bold || false,
-            italic: tb.italic || false,
+            x: tbX + 0.08,
+            y: tbY + 0.06,
+            w: tbW - 0.16,
+            h: tbH - 0.12,
+            fontSize: tb.fontSize ? Math.round(tb.fontSize * 0.72) : 9.5,
+            bold: !!tb.bold,
+            italic: !!tb.italic,
             align: tb.align || 'left',
-            color: tb.color ? tb.color.replace('#', '') : darkNavy,
+            color: cleanColorHex(tb.color, textDark),
             fontFace: 'Arial',
+            valign: 'middle',
           });
         });
       }

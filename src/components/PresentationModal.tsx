@@ -17,6 +17,7 @@ import { AcademicBook, SlideData } from '../types';
 import { CAMPUS_CONFIGS } from '../data/defaults';
 import { EstacioLogo } from './EstacioLogo';
 import { getCourseCoverImage } from '../utils/courseCovers';
+import { computePhotoLayout } from '../utils/photoLayoutEngine';
 
 interface PresentationModalProps {
   isOpen: boolean;
@@ -329,69 +330,92 @@ export const PresentationModal: React.FC<PresentationModalProps> = ({
                 )}
               </div>
 
-              <div className="w-7/12 flex items-center justify-center relative">
+              <div className="w-7/12 flex items-center justify-center relative min-h-0 h-full">
                 {currentSlide.photos && currentSlide.photos.length > 0 ? (
-                  <div
-                    className={`grid gap-2 w-full h-full ${
-                      currentSlide.photoLayout === 'split-50-50' || currentSlide.photos.length === 2
-                        ? 'grid-cols-2'
-                        : currentSlide.photoLayout === 'grid-3' || currentSlide.photos.length === 3
-                        ? 'grid-cols-3'
-                        : 'grid-cols-1'
-                    }`}
-                  >
-                    {currentSlide.photos.map((p) => (
-                      <div
-                        key={p.id}
-                        style={{
-                          aspectRatio: p.aspectRatio === '16/9' ? '16/9' : p.aspectRatio === '4/3' ? '4/3' : p.aspectRatio === '1/1' ? '1/1' : undefined,
-                        }}
-                        className="rounded-lg overflow-hidden border border-slate-200 relative bg-slate-100 flex flex-col justify-between"
-                      >
-                        <div className="relative w-full h-full min-h-[170px] overflow-hidden">
-                          <img
-                            src={p.url}
-                            alt={p.caption || 'Foto'}
-                            className={`w-full h-full ${
-                              p.fit === 'contain' ? 'object-contain' : 'object-cover'
-                            }`}
-                            style={{
-                              transform: `scale(${(p.zoom || 1) * (p.scale || 1)}) translate(${p.x || 0}%, ${p.y || 0}%) rotate(${p.rotation || 0}deg)`,
-                              objectPosition: p.position === 'top' ? 'top center' : p.position === 'bottom' ? 'bottom center' : p.position === 'left' ? 'left center' : p.position === 'right' ? 'right center' : `${p.cropX ?? 50}% ${p.cropY ?? 50}%`,
-                            }}
-                          />
-                        </div>
-                        {p.caption && (
-                          <div className="p-1.5 bg-white/95 text-[10px] text-slate-700 italic border-t border-slate-200 truncate">
-                            {p.caption}
+                  <div className="relative w-full h-full min-h-0">
+                    {computePhotoLayout(currentSlide.photos, (currentSlide.photoLayout as any) || 'auto').map((frame) => {
+                      const p = frame.photo;
+                      return (
+                        <div
+                          key={p.id}
+                          style={{
+                            position: 'absolute',
+                            left: `${frame.leftPercent}%`,
+                            top: `${frame.topPercent}%`,
+                            width: `${frame.widthPercent}%`,
+                            height: `${frame.heightPercent}%`,
+                          }}
+                          className="rounded-lg overflow-hidden border border-slate-200 bg-slate-100 flex flex-col justify-between shadow-2xs"
+                        >
+                          <div className="relative w-full flex-1 min-h-0 overflow-hidden">
+                            <img
+                              src={p.url}
+                              alt={p.caption || 'Foto'}
+                              className={`w-full h-full ${
+                                (p.fit || frame.fit) === 'contain' ? 'object-contain' : 'object-cover'
+                              }`}
+                              style={{
+                                transform: `scale(${(p.zoom || 1) * (p.scale || 1)}) translate(${p.x || 0}%, ${p.y || 0}%) rotate(${p.rotation || 0}deg)`,
+                                objectPosition: p.position === 'top' ? 'top center' : p.position === 'bottom' ? 'bottom center' : p.position === 'left' ? 'left center' : p.position === 'right' ? 'right center' : `${p.cropX ?? 50}% ${p.cropY ?? 50}%`,
+                              }}
+                            />
                           </div>
-                        )}
-                      </div>
-                    ))}
+                          {p.caption && (
+                            <div className="p-1 bg-white/95 text-[10px] text-slate-700 italic border-t border-slate-200 truncate shrink-0">
+                              {p.caption}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
                 ) : (
                   <div className="text-slate-400 text-xs">Registro textual de evidência</div>
                 )}
 
-                {/* Render custom text boxes in presentation mode */}
-                {(currentSlide.customTextBoxes || []).map((box) => (
-                  <div
-                    key={box.id}
-                    style={{
-                      left: `${box.x}%`,
-                      top: `${box.y}%`,
-                      width: `${box.width}%`,
-                      fontSize: `${box.fontSize || 14}px`,
-                      color: box.color || '#0F172A',
-                      fontWeight: box.bold ? 'bold' : 'normal',
-                      fontStyle: box.italic ? 'italic' : 'normal',
-                      textAlign: box.align || 'left',
-                    }}
-                    className="absolute z-30 pointer-events-none p-1 leading-relaxed"
-                  >
-                    {box.text}
-                  </div>
-                ))}
+                {/* Render custom text boxes and balloons in presentation mode (REQUISITO 3) */}
+                {(currentSlide.customTextBoxes || []).map((box) => {
+                  const bgCol = box.backgroundColor || (box.isBalloon ? '#FEF3C7' : 'transparent');
+                  const borderCol = box.borderColor || (box.isBalloon ? '#F59E0B' : 'transparent');
+                  const borderW = box.borderWidth !== undefined ? box.borderWidth : (box.isBalloon ? 1.5 : 0);
+                  const borderR = box.borderRadius !== undefined ? box.borderRadius : (box.isBalloon ? 10 : 6);
+
+                  return (
+                    <div
+                      key={box.id}
+                      style={{
+                        left: `${box.x}%`,
+                        top: `${box.y}%`,
+                        width: `${box.width}%`,
+                        fontSize: `${box.fontSize || 14}px`,
+                        color: box.color || '#0F172A',
+                        fontWeight: box.bold ? 'bold' : 'normal',
+                        fontStyle: box.italic ? 'italic' : 'normal',
+                        textAlign: box.align || 'left',
+                        backgroundColor: bgCol,
+                        borderColor: borderCol,
+                        borderWidth: `${borderW}px`,
+                        borderStyle: borderW > 0 ? 'solid' : 'none',
+                        borderRadius: `${borderR}px`,
+                        padding: `${box.padding || 8}px`,
+                      }}
+                      className="absolute z-30 pointer-events-none leading-relaxed shadow-sm"
+                    >
+                      {box.isBalloon && (
+                        <div
+                          style={{
+                            backgroundColor: bgCol,
+                            borderColor: borderCol,
+                            borderBottomWidth: `${borderW}px`,
+                            borderRightWidth: `${borderW}px`,
+                          }}
+                          className="absolute -bottom-1.5 left-5 w-2.5 h-2.5 rotate-45 pointer-events-none"
+                        />
+                      )}
+                      {box.text}
+                    </div>
+                  );
+                })}
               </div>
             </div>
 

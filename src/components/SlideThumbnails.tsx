@@ -11,7 +11,9 @@ import {
   Award, 
   BarChart3, 
   PhoneCall, 
-  ListOrdered
+  ListOrdered,
+  RefreshCw,
+  Share2
 } from 'lucide-react';
 import { SlideData, SlideType } from '../types';
 
@@ -23,6 +25,7 @@ interface SlideThumbnailsProps {
   onDuplicateSlide: (id: string) => void;
   onDeleteSlide: (id: string) => void;
   onMoveSlide: (index: number, direction: 'up' | 'down') => void;
+  onOpenSyncSlideModal?: (slide: SlideData) => void;
 }
 
 export const SlideThumbnails: React.FC<SlideThumbnailsProps> = ({
@@ -33,6 +36,7 @@ export const SlideThumbnails: React.FC<SlideThumbnailsProps> = ({
   onDuplicateSlide,
   onDeleteSlide,
   onMoveSlide,
+  onOpenSyncSlideModal,
 }) => {
   const getSlideIcon = (type: SlideType) => {
     switch (type) {
@@ -85,6 +89,7 @@ export const SlideThumbnails: React.FC<SlideThumbnailsProps> = ({
         {slides.map((slide, index) => {
           const isActive = slide.id === activeSlideId;
           const photoCount = slide.photos?.length || 0;
+          const isSynced = slide.isShared || (slide.syncedBookIds && slide.syncedBookIds.length > 0) || !!slide.syncGroupId;
 
           return (
             <div
@@ -98,20 +103,41 @@ export const SlideThumbnails: React.FC<SlideThumbnailsProps> = ({
             >
               {/* Slide preview header */}
               <div className="flex items-center justify-between gap-1 mb-1.5">
-                <div className="flex items-center gap-1.5">
+                <div className="flex items-center gap-1.5 overflow-hidden">
                   <span className="text-[10px] font-mono font-bold text-slate-400">
                     #{index + 1 < 10 ? `0${index + 1}` : index + 1}
                   </span>
-                  <div className="p-0.5 rounded-sm bg-slate-100">
+                  <div className="p-0.5 rounded-sm bg-slate-100 shrink-0">
                     {getSlideIcon(slide.type)}
                   </div>
-                  <span className="text-[10px] font-semibold uppercase text-slate-500 truncate max-w-[100px]">
+                  <span className="text-[10px] font-semibold uppercase text-slate-500 truncate max-w-[85px]">
                     {slide.type}
                   </span>
+                  {isSynced && (
+                    <span 
+                      title="Slide sincronizado com outros books" 
+                      className="inline-flex items-center gap-0.5 px-1 py-0.2 bg-sky-50 text-[#00A3E0] border border-sky-200 rounded-[3px] text-[8.5px] font-bold shrink-0"
+                    >
+                      <RefreshCw className="w-2.5 h-2.5 animate-in spin-in-180 duration-300" />
+                      <span>Sync</span>
+                    </span>
+                  )}
                 </div>
 
                 {/* Quick actions on hover */}
                 <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                  {onOpenSyncSlideModal && (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onOpenSyncSlideModal(slide);
+                      }}
+                      title="Sincronizar com outros books (Requisito 4)"
+                      className="p-1 text-slate-400 hover:text-sky-600 transition-colors"
+                    >
+                      <Share2 className="w-3 h-3" />
+                    </button>
+                  )}
                   <button
                     disabled={index === 0}
                     onClick={(e) => {
