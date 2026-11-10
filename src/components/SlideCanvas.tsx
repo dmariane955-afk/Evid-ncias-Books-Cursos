@@ -35,15 +35,16 @@ import {
   AlignCenter,
   AlignRight,
   Palette,
-  Layers
+  Layers,
+  Layout
 } from 'lucide-react';
 import { AcademicBook, SlideData, PhotoItem, PhotoLayout, PhotoFit, TextBoxElement, ActivityType } from '../types';
 import { CAMPUS_CONFIGS, AREA_CONFIGS } from '../data/defaults';
 import { generateActivityObjective } from '../utils/aiObjective';
 import { EstacioLogo } from './EstacioLogo';
 import { getCourseCoverImage, COURSE_COVER_LIBRARY } from '../utils/courseCovers';
-import { uploadCoverImageToStorage } from '../services/storageService';
-import { computePhotoLayout, SmartCompositionPreset } from '../utils/photoLayoutEngine';
+import { uploadCoverImageToStorage, compressImageToDataUrl } from '../services/storageService';
+import { computePhotoLayout, SmartCompositionPreset, normalizePreset } from '../utils/photoLayoutEngine';
 import { Loader2 } from 'lucide-react';
 
 interface SlideCanvasProps {
@@ -149,24 +150,24 @@ export const SlideCanvas: React.FC<SlideCanvasProps> = ({
     };
   }, [photoTransformState, slide.photos, onUpdateSlide]);
 
-  // Global paste (Ctrl+V) handler
+  // Global paste (Ctrl+V) handler with automatic compression
   useEffect(() => {
-    const handlePaste = (e: ClipboardEvent) => {
+    const handlePaste = async (e: ClipboardEvent) => {
       if (!e.clipboardData) return;
       const items = e.clipboardData.items;
       for (let i = 0; i < items.length; i++) {
         if (items[i].type.indexOf('image') !== -1) {
           const file = items[i].getAsFile();
           if (file) {
-            const reader = new FileReader();
-            reader.onload = (event) => {
-              const url = event.target?.result as string;
-              if (url) {
-                handleInsertPhoto(url);
-              }
-            };
-            reader.readAsDataURL(file);
             e.preventDefault();
+            try {
+              const compressedUrl = await compressImageToDataUrl(file, 1280, 720, 0.75);
+              if (compressedUrl) {
+                await handleInsertPhoto(compressedUrl);
+              }
+            } catch (err) {
+              console.warn('Failed to compress pasted image:', err);
+            }
             break;
           }
         }
@@ -177,21 +178,26 @@ export const SlideCanvas: React.FC<SlideCanvasProps> = ({
     return () => window.removeEventListener('paste', handlePaste);
   }, [slide]);
 
-  // Insert or Replace photo
-  const handleInsertPhoto = (url: string) => {
+  // Insert or Replace photo (with auto-compression guard)
+  const handleInsertPhoto = async (url: string) => {
+    let finalUrl = url;
+    if (url.startsWith('data:') && url.length > 80000) {
+      finalUrl = await compressImageToDataUrl(url, 1280, 720, 0.75);
+    }
+
     const currentPhotos = slide.photos ? [...slide.photos] : [];
     if (replacePhotoIndexRef.current !== null) {
       const idx = replacePhotoIndexRef.current;
       const updated = [...currentPhotos];
       if (updated[idx]) {
-        updated[idx] = { ...updated[idx], url };
+        updated[idx] = { ...updated[idx], url: finalUrl };
       }
       onUpdateSlide({ photos: updated });
       replacePhotoIndexRef.current = null;
     } else {
       const newPhoto: PhotoItem = {
         id: `p-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
-        url,
+        url: finalUrl,
         caption: 'Registro fotográfico da atividade',
         fit: 'cover',
       };
@@ -200,17 +206,17 @@ export const SlideCanvas: React.FC<SlideCanvasProps> = ({
     }
   };
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      const reader = new FileReader();
-      reader.onload = (event) => {
-        const url = event.target?.result as string;
-        if (url) {
-          handleInsertPhoto(url);
+      try {
+        const compressedUrl = await compressImageToDataUrl(file, 1280, 720, 0.75);
+        if (compressedUrl) {
+          await handleInsertPhoto(compressedUrl);
         }
-      };
-      reader.readAsDataURL(file);
+      } catch (err) {
+        console.warn('Failed to compress uploaded file in SlideCanvas:', err);
+      }
     }
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
@@ -518,15 +524,15 @@ export const SlideCanvas: React.FC<SlideCanvasProps> = ({
       />
 
       {/* TOP CANVAS CONTROLS (Add Text Box, Insert Photo, Change Layout) */}
-      <div className="no-print mb-3 h-10 w-full max-w-5xl flex items-center justify-between px-3 py-1.5 bg-white rounded-lg border border-slate-300 shadow-2xs text-xs">
-        <div className="flex items-center gap-2">
+      <div className="no-print mb-3 min-h-10 w-full max-w-5xl flex flex-wrap items-center justify-between gap-2 px-3 py-1.5 bg-white rounded-lg border border-slate-300 shadow-2xs text-xs">
+        <div className="flex flex-wrap items-center gap-2">
           <span className="font-bold text-slate-800">Slide #{slideIndex}</span>
           <span className="text-slate-300">|</span>
           <span className="text-slate-500 font-medium">Tipo:</span>
           <span className="font-semibold text-[#004B8D] capitalize">{slide.type}</span>
 
           {slide.type === 'evidencia' && (
-            <div className="hidden sm:flex items-center gap-1 bg-slate-100 p-0.5 rounded-md ml-2">
+            <div className="flex items-center gap-1 bg-slate-100 p-0.5 rounded-md ml-1 sm:ml-2">
               <span className="text-[10px] font-bold text-slate-400 uppercase px-1">Layout:</span>
               <button
                 onClick={(e) => {
@@ -535,7 +541,7 @@ export const SlideCanvas: React.FC<SlideCanvasProps> = ({
                 }}
                 title="Composição fotográfica adaptativa inteligente (proporcional, sem distorção)"
                 className={`px-2 py-0.5 rounded text-[11px] font-medium transition-colors ${
-                  !slide.photoLayout || slide.photoLayout === 'auto'
+                  normalizePreset(slide.photoLayout) === 'auto'
                     ? 'bg-white text-[#004B8D] font-bold shadow-2xs'
                     : 'text-slate-600 hover:text-slate-900'
                 }`}
@@ -549,7 +555,7 @@ export const SlideCanvas: React.FC<SlideCanvasProps> = ({
                 }}
                 title="Composição Editorial (1 foto principal em destaque + secundárias)"
                 className={`px-2 py-0.5 rounded text-[11px] font-medium transition-colors ${
-                  slide.photoLayout === 'editorial'
+                  normalizePreset(slide.photoLayout) === 'editorial'
                     ? 'bg-white text-[#004B8D] font-bold shadow-2xs'
                     : 'text-slate-600 hover:text-slate-900'
                 }`}
@@ -563,7 +569,7 @@ export const SlideCanvas: React.FC<SlideCanvasProps> = ({
                 }}
                 title="Colunas Lado a Lado proporcionais"
                 className={`px-2 py-0.5 rounded text-[11px] font-medium transition-colors ${
-                  slide.photoLayout === 'side-by-side' || slide.photoLayout === 'split-50-50'
+                  normalizePreset(slide.photoLayout) === 'side-by-side'
                     ? 'bg-white text-[#004B8D] font-bold shadow-2xs'
                     : 'text-slate-600 hover:text-slate-900'
                 }`}
@@ -577,7 +583,7 @@ export const SlideCanvas: React.FC<SlideCanvasProps> = ({
                 }}
                 title="Fotos empilhadas horizontalmente"
                 className={`px-2 py-0.5 rounded text-[11px] font-medium transition-colors ${
-                  slide.photoLayout === 'stacked'
+                  normalizePreset(slide.photoLayout) === 'stacked'
                     ? 'bg-white text-[#004B8D] font-bold shadow-2xs'
                     : 'text-slate-600 hover:text-slate-900'
                 }`}
@@ -591,7 +597,7 @@ export const SlideCanvas: React.FC<SlideCanvasProps> = ({
                 }}
                 title="Grade balanceada 2x2 ou mosaico"
                 className={`px-2 py-0.5 rounded text-[11px] font-medium transition-colors ${
-                  slide.photoLayout === 'grid' || slide.photoLayout === 'grid-3'
+                  normalizePreset(slide.photoLayout) === 'grid'
                     ? 'bg-white text-[#004B8D] font-bold shadow-2xs'
                     : 'text-slate-600 hover:text-slate-900'
                 }`}
@@ -1177,6 +1183,81 @@ export const SlideCanvas: React.FC<SlideCanvasProps> = ({
                 ) : (
                   /* Photos Dynamic Composition with Reordering & Replacement (Requisitos 1 e 2) */
                   <div className="w-full h-full flex flex-col justify-between min-h-0">
+                    {/* Compact layout switcher directly above photos */}
+                    <div className="mb-1.5 pb-1 border-b border-slate-200 flex items-center justify-between gap-1 flex-wrap shrink-0">
+                      <div className="flex items-center gap-1.5 text-[11px] text-slate-700 font-bold">
+                        <Layout className="w-3.5 h-3.5 text-[#00A3E0]" />
+                        <span>Layout ({slide.photos.length} {slide.photos.length === 1 ? 'foto' : 'fotos'}):</span>
+                      </div>
+                      <div className="flex items-center gap-0.5 bg-slate-100 p-0.5 rounded-md border border-slate-200">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onUpdateSlide({ photoLayout: 'auto' });
+                          }}
+                          className={`px-1.5 py-0.5 rounded text-[10px] font-semibold transition-colors ${
+                            normalizePreset(slide.photoLayout) === 'auto'
+                              ? 'bg-white text-[#004B8D] font-bold shadow-2xs'
+                              : 'text-slate-600 hover:text-slate-900'
+                          }`}
+                        >
+                          Auto ✨
+                        </button>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onUpdateSlide({ photoLayout: 'editorial' });
+                          }}
+                          className={`px-1.5 py-0.5 rounded text-[10px] font-semibold transition-colors ${
+                            normalizePreset(slide.photoLayout) === 'editorial'
+                              ? 'bg-white text-[#004B8D] font-bold shadow-2xs'
+                              : 'text-slate-600 hover:text-slate-900'
+                          }`}
+                        >
+                          Editorial
+                        </button>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onUpdateSlide({ photoLayout: 'side-by-side' });
+                          }}
+                          className={`px-1.5 py-0.5 rounded text-[10px] font-semibold transition-colors ${
+                            normalizePreset(slide.photoLayout) === 'side-by-side'
+                              ? 'bg-white text-[#004B8D] font-bold shadow-2xs'
+                              : 'text-slate-600 hover:text-slate-900'
+                          }`}
+                        >
+                          Lado a Lado
+                        </button>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onUpdateSlide({ photoLayout: 'stacked' });
+                          }}
+                          className={`px-1.5 py-0.5 rounded text-[10px] font-semibold transition-colors ${
+                            normalizePreset(slide.photoLayout) === 'stacked'
+                              ? 'bg-white text-[#004B8D] font-bold shadow-2xs'
+                              : 'text-slate-600 hover:text-slate-900'
+                          }`}
+                        >
+                          Empilhado
+                        </button>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onUpdateSlide({ photoLayout: 'grid' });
+                          }}
+                          className={`px-1.5 py-0.5 rounded text-[10px] font-semibold transition-colors ${
+                            normalizePreset(slide.photoLayout) === 'grid'
+                              ? 'bg-white text-[#004B8D] font-bold shadow-2xs'
+                              : 'text-slate-600 hover:text-slate-900'
+                          }`}
+                        >
+                          Grade
+                        </button>
+                      </div>
+                    </div>
+
                     {/* Prompt to split slide if > 3 photos */}
                     {slide.photos.length > 3 && onSplitSlidePhotos && (
                       <div className="mb-2 px-2.5 py-1 bg-sky-50 border border-sky-200 rounded-md flex items-center justify-between text-[11px] text-[#004B8D] shrink-0">
@@ -1195,7 +1276,7 @@ export const SlideCanvas: React.FC<SlideCanvasProps> = ({
 
                     {/* Intelligent Layout Composition Stage */}
                     <div className="relative w-full flex-1 min-h-0">
-                      {computePhotoLayout(slide.photos, (slide.photoLayout as SmartCompositionPreset) || 'auto').map((frame) => {
+                      {computePhotoLayout(slide.photos, slide.photoLayout).map((frame) => {
                         const photo = frame.photo;
                         const pIdx = frame.index;
                         const isSelected = activePhotoId === photo.id;

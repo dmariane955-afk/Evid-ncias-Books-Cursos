@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import { ActivityItem, ActivityType, Course, PhotoItem, CampusId } from '../types';
 import { generateActivityObjective } from '../utils/aiObjective';
+import { compressImageToDataUrl } from '../services/storageService';
 
 interface NewActivityModalProps {
   isOpen: boolean;
@@ -101,14 +102,16 @@ export const NewActivityModal: React.FC<NewActivityModalProps> = ({
       setApplyScope('current');
 
       if (initialDroppedImage) {
-        setPhotos([
-          {
-            id: `p-${Date.now()}`,
-            url: initialDroppedImage,
-            caption: 'Registro fotográfico da atividade',
-            fit: 'cover',
-          },
-        ]);
+        compressImageToDataUrl(initialDroppedImage, 1280, 720, 0.75).then((compressed) => {
+          setPhotos([
+            {
+              id: `p-${Date.now()}`,
+              url: compressed || initialDroppedImage,
+              caption: 'Registro fotográfico da atividade',
+              fit: 'cover',
+            },
+          ]);
+        });
       } else {
         setPhotos([]);
       }
@@ -121,41 +124,41 @@ export const NewActivityModal: React.FC<NewActivityModalProps> = ({
 
   if (!isOpen) return null;
 
-  // Handle image files upload
+  // Handle image files upload with automatic HD client-side compression
   const handleFiles = (files: FileList | null) => {
     if (!files) return;
     const fileArray = Array.from(files);
-    fileArray.forEach((file) => {
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        const url = e.target?.result as string;
-        if (url) {
-          if (replaceIndexRef.current !== null) {
-            // Replace photo at specific index
-            const idx = replaceIndexRef.current;
-            setPhotos((prev) => {
-              const updated = [...prev];
-              if (updated[idx]) {
-                updated[idx] = { ...updated[idx], url };
-              }
-              return updated;
-            });
-            replaceIndexRef.current = null;
-          } else {
-            // Add new photo
-            setPhotos((prev) => [
-              ...prev,
-              {
-                id: `p-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
-                url,
-                caption: 'Registro fotográfico da atividade',
-                fit: 'cover',
-              },
-            ]);
-          }
+    fileArray.forEach(async (file) => {
+      try {
+        const compressedUrl = await compressImageToDataUrl(file, 1280, 720, 0.75);
+        if (!compressedUrl) return;
+
+        if (replaceIndexRef.current !== null) {
+          // Replace photo at specific index
+          const idx = replaceIndexRef.current;
+          setPhotos((prev) => {
+            const updated = [...prev];
+            if (updated[idx]) {
+              updated[idx] = { ...updated[idx], url: compressedUrl };
+            }
+            return updated;
+          });
+          replaceIndexRef.current = null;
+        } else {
+          // Add new photo
+          setPhotos((prev) => [
+            ...prev,
+            {
+              id: `p-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+              url: compressedUrl,
+              caption: 'Registro fotográfico da atividade',
+              fit: 'cover',
+            },
+          ]);
         }
-      };
-      reader.readAsDataURL(file);
+      } catch (err) {
+        console.warn('Failed to compress image in NewActivityModal:', err);
+      }
     });
   };
 

@@ -14,10 +14,11 @@ import {
   SyncContentModal,
   SyncSlideModal 
 } from './components/SyncAndActionModals';
-import { Course, AcademicBook, ActivityItem, SlideData, CampusId, AcademicArea } from './types';
+import { Course, AcademicBook, ActivityItem, SlideData, CampusId, AcademicArea, ActivityType, PhotoItem } from './types';
 import { INITIAL_COURSES, INITIAL_ACTIVITIES, createInitialBooks, COURSES_BY_AREA } from './data/defaults';
 import { exportToPowerPoint } from './utils/pptxExport';
 import { getCourseCoverImage } from './utils/courseCovers';
+import { compressImageToDataUrl } from './services/storageService';
 import { 
   initFirestoreSync, 
   saveBookToFirestore, 
@@ -299,71 +300,184 @@ export default function App() {
     }
   }, [courses, activities, books]);
 
+  // 3.1 Bidirectional Reconciliation: Guarantee every evidence slide in books has an active ActivityItem
+  useEffect(() => {
+    setActivities((prevActs) => {
+      const existingIds = new Set(prevActs.map((a) => a.id));
+      const additions: ActivityItem[] = [];
+
+      books.forEach((b) => {
+        (b.slides || []).forEach((slide) => {
+          if (slide.type === 'evidencia' && slide.activityId && !existingIds.has(slide.activityId)) {
+            const restoredAct: ActivityItem = {
+              id: slide.activityId,
+              bookId: b.id,
+              campus: b.campus,
+              unitId: b.campus,
+              courseId: b.courseId,
+              title: slide.title || 'Evidência Acadêmica',
+              date: slide.date || slide.evidenceMeta?.date || new Date().toISOString().split('T')[0],
+              time: slide.time || slide.evidenceMeta?.time || '14:00',
+              activityType: (slide.activityType as ActivityType) || 'Atividade regular',
+              objective: slide.objective || slide.evidenceMeta?.actionsReport || 'Registro de atividade prática.',
+              complementaryText: slide.evidenceMeta?.pedagogicalImpact || '',
+              photos: slide.photos || [],
+              targetCourseIds: [b.courseId],
+              primaryCampus: b.campus,
+              syncedCampuses: [b.campus],
+              isShared: false,
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString(),
+            };
+            additions.push(restoredAct);
+            existingIds.add(slide.activityId);
+            saveActivityToFirestore(restoredAct);
+          }
+        });
+      });
+
+      if (additions.length > 0) {
+        const nextList = [...additions, ...prevActs];
+        try {
+          localStorage.setItem(STORAGE_ACTIVITIES_KEY, JSON.stringify(nextList));
+        } catch (e) {
+          console.warn(e);
+        }
+        return nextList;
+      }
+      return prevActs;
+    });
+  }, [books]);
+
   // 4. Real-time Cloud Database Synchronization (Firestore)
-  // All modifications made by anyone with the link reflect in real-time
+  // Smart non-destructive bidirectional merge: NEVER erases locally created activities or evidence slides
   useEffect(() => {
     const unsub = initFirestoreSync(
       {
         onCoursesLoaded: (loadedCourses) => {
           if (loadedCourses && loadedCourses.length > 0) {
-            setCourses(loadedCourses);
-            try {
-              localStorage.setItem(STORAGE_COURSES_KEY, JSON.stringify(loadedCourses));
-            } catch (e) {
-              console.warn(e);
-            }
+            setCourses((currentCourses) => {
+              const remoteIds = new Set(loadedCourses.map((c) => c.id));
+              const merged = [...loadedCourses];
+              // Preserve any locally created courses not yet in remote
+              for (const localC of currentCourses) {
+                if (!remoteIds.has(localC.id)) {
+                  merged.push(localC);
+                  saveCourseToFirestore(localC);
+                }
+              }
+              try {
+                localStorage.setItem(STORAGE_COURSES_KEY, JSON.stringify(merged));
+              } catch (e) {
+                console.warn(e);
+              }
+              return merged;
+            });
           }
         },
         onActivitiesLoaded: (loadedActivities) => {
           if (loadedActivities && loadedActivities.length > 0) {
-            setActivities(loadedActivities);
-            try {
-              localStorage.setItem(STORAGE_ACTIVITIES_KEY, JSON.stringify(loadedActivities));
-            } catch (e) {
-              console.warn(e);
-            }
+            setActivities((currentActivities) => {
+              const remoteMap = new Map(loadedActivities.map((a) => [a.id, a]));
+              const merged: ActivityItem[] = [...loadedActivities];
+
+              for (const localAct of currentActivities) {
+                if (!remoteMap.has(localAct.id)) {
+                  // Local activity not in Firestore snapshot: preserve and save to Firestore!
+                  merged.push(localAct);
+                  saveActivityToFirestore(localAct);
+                } else {
+                  // Compare timestamps: if local has more recent edit, keep local and sync to Firestore
+                  const remote = remoteMap.get(localAct.id)!;
+                  const localTime = new Date(localAct.updatedAt || 0).getTime();
+                  const remoteTime = new Date(remote.updatedAt || 0).getTime();
+                  if (localTime > remoteTime) {
+                    const idx = merged.findIndex((a) => a.id === localAct.id);
+                    if (idx !== -1) merged[idx] = localAct;
+                    saveActivityToFirestore(localAct);
+                  }
+                }
+              }
+
+              try {
+                localStorage.setItem(STORAGE_ACTIVITIES_KEY, JSON.stringify(merged));
+              } catch (e) {
+                console.warn(e);
+              }
+              return merged;
+            });
           }
         },
         onBooksLoaded: (loadedBooks) => {
           if (loadedBooks && loadedBooks.length > 0) {
-            const sortedBooks = loadedBooks.map((b) => {
-              const capaSlide = b.slides?.find((s) => s.type === 'capa');
-              const capaPhotoUrl = capaSlide?.photos?.[0]?.url;
-              const customDataUrl = [b.coverImage, capaPhotoUrl].find(
-                (url) => url && typeof url === 'string' && url.startsWith('data:')
-              );
-              const effectiveCover = customDataUrl || b.coverImage || capaPhotoUrl;
+            setBooks((currentBooks) => {
+              const localBooksMap = new Map(currentBooks.map((b) => [b.id, b]));
 
-              const slides = (b.slides || []).sort((s1, s2) => (s1.order || 0) - (s2.order || 0)).map((s) => {
-                if (s.type === 'capa' && effectiveCover) {
-                  const currentPhoto = s.photos?.[0];
-                  if (!s.photos || s.photos.length === 0) {
-                    return {
-                      ...s,
-                      photos: [{ id: `cover-${b.courseId}`, url: effectiveCover, caption: b.courseName, fit: 'cover' as const }],
-                    };
-                  } else if (s.photos[0]?.url !== effectiveCover) {
-                    return {
-                      ...s,
-                      photos: [{ ...currentPhoto, id: currentPhoto.id || `cover-${b.courseId}`, url: effectiveCover }],
-                    };
+              const mergedBooks = loadedBooks.map((remoteBook) => {
+                const localBook = localBooksMap.get(remoteBook.id);
+                if (!localBook) {
+                  const capaSlide = remoteBook.slides?.find((s) => s.type === 'capa');
+                  const capaPhotoUrl = capaSlide?.photos?.[0]?.url;
+                  const effectiveCover = remoteBook.coverImage || capaPhotoUrl;
+                  return {
+                    ...remoteBook,
+                    coverImage: effectiveCover || remoteBook.coverImage,
+                  };
+                }
+
+                // Remote book exists and local book exists: merge slides to preserve local evidence slides!
+                const remoteSlideIds = new Set((remoteBook.slides || []).map((s) => s.id));
+                const mergedSlides = [...(remoteBook.slides || [])];
+                let shouldSyncBack = false;
+
+                for (const localSlide of (localBook.slides || [])) {
+                  if (!remoteSlideIds.has(localSlide.id)) {
+                    // Local slide not in remote book (e.g. newly added evidence slide)
+                    mergedSlides.push(localSlide);
+                    shouldSyncBack = true;
                   }
                 }
-                return s;
+
+                const sortedSlides = mergedSlides.sort((s1, s2) => (s1.order || 0) - (s2.order || 0));
+
+                const capaSlide = sortedSlides.find((s) => s.type === 'capa');
+                const capaPhotoUrl = capaSlide?.photos?.[0]?.url;
+                const effectiveCover = localBook.coverImage || remoteBook.coverImage || capaPhotoUrl;
+
+                const finalBook: AcademicBook = {
+                  ...remoteBook,
+                  ...localBook,
+                  coverImage: effectiveCover || remoteBook.coverImage,
+                  slides: sortedSlides,
+                  updatedAt: localBook.updatedAt && remoteBook.updatedAt
+                    ? new Date(localBook.updatedAt) > new Date(remoteBook.updatedAt)
+                      ? localBook.updatedAt
+                      : remoteBook.updatedAt
+                    : localBook.updatedAt || remoteBook.updatedAt || new Date().toISOString(),
+                };
+
+                if (shouldSyncBack) {
+                  saveBookToFirestore(finalBook);
+                }
+                return finalBook;
               });
 
-              return {
-                ...b,
-                coverImage: effectiveCover || b.coverImage,
-                slides,
-              };
+              // Include any local book that wasn't in remote at all
+              const remoteBookIds = new Set(loadedBooks.map((b) => b.id));
+              for (const localBook of currentBooks) {
+                if (!remoteBookIds.has(localBook.id)) {
+                  mergedBooks.push(localBook);
+                  saveBookToFirestore(localBook);
+                }
+              }
+
+              try {
+                localStorage.setItem(STORAGE_BOOKS_KEY, JSON.stringify(mergedBooks));
+              } catch (e) {
+                console.warn(e);
+              }
+              return mergedBooks;
             });
-            setBooks(sortedBooks);
-            try {
-              localStorage.setItem(STORAGE_BOOKS_KEY, JSON.stringify(sortedBooks));
-            } catch (e) {
-              console.warn(e);
-            }
           }
         },
         onStatusChange: (status, message) => {
@@ -375,9 +489,9 @@ export default function App() {
         },
       },
       {
-        courses: INITIAL_COURSES,
-        activities: INITIAL_ACTIVITIES,
-        books: createInitialBooks(INITIAL_COURSES, INITIAL_ACTIVITIES),
+        courses: courses,
+        activities: activities,
+        books: books,
       }
     );
 
@@ -474,13 +588,20 @@ export default function App() {
   // Guarantee flush on page refresh / window close
   useEffect(() => {
     const handleBeforeUnload = () => {
+      try {
+        localStorage.setItem(STORAGE_COURSES_KEY, JSON.stringify(courses));
+        localStorage.setItem(STORAGE_ACTIVITIES_KEY, JSON.stringify(activities));
+        localStorage.setItem(STORAGE_BOOKS_KEY, JSON.stringify(books));
+      } catch (e) {
+        console.warn('LocalStorage flush error on beforeunload:', e);
+      }
       if (currentBook) {
         saveBookToFirestore(currentBook);
       }
     };
     window.addEventListener('beforeunload', handleBeforeUnload);
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
-  }, [currentBook]);
+  }, [courses, activities, books, currentBook]);
 
   // Handle Share Link for Real-time Collaboration
   const handleShareLink = () => {
@@ -655,9 +776,10 @@ export default function App() {
     }
 
     // If this slide is linked to an activity, update the activity and save it to Firestore
+    // If this slide is linked to an activity, update the activity and save it to Firestore & localStorage
     if (currentActiveSlide.activityId) {
-      setActivities((prev) =>
-        prev.map((act) => {
+      setActivities((prev) => {
+        const nextActs = prev.map((act) => {
           if (act.id !== currentActiveSlide.activityId) return act;
           const updatedAct: ActivityItem = {
             ...act,
@@ -671,29 +793,61 @@ export default function App() {
           };
           saveActivityToFirestore(updatedAct);
           return updatedAct;
-        })
-      );
+        });
+        try {
+          localStorage.setItem(STORAGE_ACTIVITIES_KEY, JSON.stringify(nextActs));
+        } catch (e) {
+          console.warn('LocalStorage error:', e);
+        }
+        return nextActs;
+      });
     }
   };
 
   // 4. Activity Management with STRICT ISOLATION BETWEEN BOOKS & UNITS
-  const handleSaveActivity = (activity: ActivityItem, applyToAllSynced: boolean = true) => {
+  const handleSaveActivity = async (activity: ActivityItem, applyToAllSynced: boolean = true) => {
     pushHistorySnapshot();
 
-    const isExisting = activities.some((a) => a.id === activity.id);
+    // Guard: compress any raw base64 photos to ensure lightweight storage
+    const compressedPhotos: PhotoItem[] = await Promise.all(
+      (activity.photos || []).map(async (p) => {
+        if (p.url && (p.url.startsWith('data:') || p.url.startsWith('blob:')) && p.url.length > 80000) {
+          try {
+            const compressed = await compressImageToDataUrl(p.url, 1280, 720, 0.75);
+            return { ...p, url: compressed || p.url };
+          } catch {
+            return p;
+          }
+        }
+        return p;
+      })
+    );
+
+    const safeActivity: ActivityItem = {
+      ...activity,
+      photos: compressedPhotos,
+      updatedAt: new Date().toISOString(),
+    };
+
+    const isExisting = activities.some((a) => a.id === safeActivity.id);
     let updatedActivities: ActivityItem[];
     if (isExisting) {
-      updatedActivities = activities.map((a) => (a.id === activity.id ? activity : a));
+      updatedActivities = activities.map((a) => (a.id === safeActivity.id ? safeActivity : a));
     } else {
-      updatedActivities = [activity, ...activities];
+      updatedActivities = [safeActivity, ...activities];
     }
     setActivities(updatedActivities);
-    saveActivityToFirestore(activity);
+    try {
+      localStorage.setItem(STORAGE_ACTIVITIES_KEY, JSON.stringify(updatedActivities));
+    } catch (e) {
+      console.warn('LocalStorage error:', e);
+    }
+    saveActivityToFirestore(safeActivity);
 
     // Identify target books explicitly:
     const targetBookIds = new Set<string>();
-    if (activity.bookId) targetBookIds.add(activity.bookId);
-    (activity.targetCourseIds || []).forEach((cId) => {
+    if (safeActivity.bookId) targetBookIds.add(safeActivity.bookId);
+    (safeActivity.targetCourseIds || []).forEach((cId) => {
       const c = courses.find((course) => course.id === cId);
       if (c) {
         targetBookIds.add(`book-${c.id}`);
@@ -702,41 +856,41 @@ export default function App() {
 
     // Update ONLY the targeted Books — all other books remain 100% UNTOUCHED
     setBooks((prevBooks) => {
-      return prevBooks.map((b) => {
+      const updatedBooks = prevBooks.map((b) => {
         const isTargeted =
-          (activity.bookId && b.id === activity.bookId) ||
+          (safeActivity.bookId && b.id === safeActivity.bookId) ||
           targetBookIds.has(b.id) ||
-          (activity.courseId === b.courseId && activity.campus === b.campus);
+          (safeActivity.courseId === b.courseId && safeActivity.campus === b.campus);
 
         if (!isTargeted) {
           // TOTAL ISOLATION: NADA é alterado ou removido em outros Books
           return b;
         }
 
-        const existingSlideIndex = b.slides.findIndex((s) => s.activityId === activity.id);
+        const existingSlideIndex = b.slides.findIndex((s) => s.activityId === safeActivity.id);
         const updatedSlide: SlideData = {
-          id: existingSlideIndex !== -1 ? b.slides[existingSlideIndex].id : `slide-act-${b.id}-${activity.id}`,
-          activityId: activity.id,
+          id: existingSlideIndex !== -1 ? b.slides[existingSlideIndex].id : `slide-act-${b.id}-${safeActivity.id}`,
+          activityId: safeActivity.id,
           type: 'evidencia',
-          title: activity.title,
-          subtitle: `${activity.activityType} · ${activity.date}${activity.time ? ` às ${activity.time}` : ''}`,
-          activityType: activity.activityType,
-          date: activity.date,
-          time: activity.time,
-          objective: activity.objective,
-          order: existingSlideIndex !== -1 ? b.slides[existingSlideIndex].order : b.slides.length,
-          photoLayout: activity.photos.length > 1 ? 'split-50-50' : 'single',
-          photos: [...activity.photos],
+          title: safeActivity.title,
+          subtitle: `${safeActivity.activityType} · ${safeActivity.date}${safeActivity.time ? ` às ${safeActivity.time}` : ''}`,
+          activityType: safeActivity.activityType,
+          date: safeActivity.date,
+          time: safeActivity.time,
+          objective: safeActivity.objective,
+          order: existingSlideIndex !== -1 ? b.slides[existingSlideIndex].order : b.slides.length + 1,
+          photoLayout: safeActivity.photos.length > 1 ? 'split-50-50' : 'single',
+          photos: [...safeActivity.photos],
           evidenceMeta: {
-            category: activity.activityType,
-            date: activity.date,
-            time: activity.time,
+            category: safeActivity.activityType,
+            date: safeActivity.date,
+            time: safeActivity.time,
             location: 'Campus Universitário',
             discipline: '',
             professor: b.coordinator || '',
             studentsCount: 0,
-            actionsReport: activity.objective,
-            pedagogicalImpact: activity.complementaryText || '',
+            actionsReport: safeActivity.objective,
+            pedagogicalImpact: safeActivity.complementaryText || '',
           },
           customTextBoxes: existingSlideIndex !== -1 ? b.slides[existingSlideIndex].customTextBoxes || [] : [],
         };
@@ -754,6 +908,13 @@ export default function App() {
         saveBookToFirestore(updatedB);
         return updatedB;
       });
+
+      try {
+        localStorage.setItem(STORAGE_BOOKS_KEY, JSON.stringify(updatedBooks));
+      } catch (e) {
+        console.warn('LocalStorage error:', e);
+      }
+      return updatedBooks;
     });
 
     setEditingActivity(null);
@@ -1492,11 +1653,20 @@ export default function App() {
 
   const handleAddSlideFromTemplate = (template: Partial<SlideData>) => {
     pushHistorySnapshot();
-    const newId = `slide-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+    const newSlideId = `slide-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+    const isEvidence = (template.type || 'evidencia') === 'evidencia';
+    const newActivityId = isEvidence ? `act-${Date.now()}-${Math.random().toString(36).substring(2, 6)}` : undefined;
+
     const newSlide: SlideData = {
-      id: newId,
+      id: newSlideId,
+      activityId: newActivityId,
       type: template.type || 'evidencia',
       title: template.title || 'Nova Atividade',
+      subtitle: template.subtitle || (isEvidence ? `Atividade regular · ${new Date().toLocaleDateString('pt-BR')}` : undefined),
+      activityType: isEvidence ? 'Atividade regular' : undefined,
+      date: isEvidence ? new Date().toISOString().split('T')[0] : undefined,
+      time: isEvidence ? '14:00' : undefined,
+      objective: template.evidenceMeta?.actionsReport || template.objective || '',
       order: currentBook.slides.length + 1,
       photos: template.photos || [],
       photoLayout: template.photoLayout || 'single',
@@ -1513,7 +1683,43 @@ export default function App() {
       updatedAt: new Date().toISOString(),
     };
     persistBookUpdate(updatedBook, true);
-    setActiveSlideId(newId);
+
+    // If it's an evidence slide, create the corresponding ActivityItem so it appears on HomePage and persists everywhere
+    if (isEvidence && newActivityId) {
+      const newActivity: ActivityItem = {
+        id: newActivityId,
+        bookId: currentBook.id,
+        campus: currentBook.campus,
+        unitId: currentBook.campus,
+        courseId: currentBook.courseId,
+        title: newSlide.title,
+        date: newSlide.date || new Date().toISOString().split('T')[0],
+        time: newSlide.time || '14:00',
+        activityType: 'Atividade regular',
+        objective: newSlide.objective || newSlide.evidenceMeta?.actionsReport || 'Registro de atividade prática acadêmica.',
+        complementaryText: newSlide.evidenceMeta?.pedagogicalImpact || '',
+        photos: newSlide.photos || [],
+        targetCourseIds: [currentBook.courseId],
+        primaryCampus: currentBook.campus,
+        syncedCampuses: [currentBook.campus],
+        isShared: false,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+
+      setActivities((prev) => {
+        const nextActs = [newActivity, ...prev];
+        try {
+          localStorage.setItem(STORAGE_ACTIVITIES_KEY, JSON.stringify(nextActs));
+        } catch (e) {
+          console.warn('LocalStorage error:', e);
+        }
+        return nextActs;
+      });
+      saveActivityToFirestore(newActivity);
+    }
+
+    setActiveSlideId(newSlideId);
   };
 
   // Export to PowerPoint

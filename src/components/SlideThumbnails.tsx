@@ -16,6 +16,7 @@ import {
   Share2
 } from 'lucide-react';
 import { SlideData, SlideType } from '../types';
+import { computePhotoLayout } from '../utils/photoLayoutEngine';
 
 interface SlideThumbnailsProps {
   slides: SlideData[];
@@ -267,28 +268,33 @@ export const SlideThumbnails: React.FC<SlideThumbnailsProps> = ({
                       {/* Right Mini Photos Card */}
                       <div className="w-[60%] flex flex-col justify-between overflow-hidden">
                         {slide.photos && slide.photos.length > 0 ? (
-                          <div
-                            className={`h-full grid gap-0.5 overflow-hidden rounded-[2px] bg-slate-200/60 ${
-                              slide.photoLayout === 'split-50-50' || slide.photos.length === 2
-                                ? 'grid-rows-2'
-                                : slide.photoLayout === 'grid-3' || slide.photos.length >= 3
-                                ? 'grid-cols-2 grid-rows-2'
-                                : 'grid-cols-1'
-                            }`}
-                          >
-                            {slide.photos.slice(0, 4).map((ph, pIdx) => (
-                              <div key={ph.id || pIdx} className="relative w-full h-full min-h-0 overflow-hidden bg-slate-300 rounded-[1px]">
-                                <img
-                                  src={ph.url}
-                                  alt=""
-                                  className={`w-full h-full ${ph.fit === 'contain' ? 'object-contain' : 'object-cover'}`}
+                          <div className="relative w-full h-full min-h-0 overflow-hidden rounded-[2px] bg-slate-200/60">
+                            {computePhotoLayout(slide.photos, slide.photoLayout).map((frame) => {
+                              const ph = frame.photo;
+                              return (
+                                <div
+                                  key={ph.id || frame.index}
                                   style={{
-                                    transform: `scale(${(ph.zoom || 1) * (ph.scale || 1)}) translate(${ph.x || 0}%, ${ph.y || 0}%) rotate(${ph.rotation || 0}deg)`,
-                                    objectPosition: ph.position === 'top' ? 'top center' : ph.position === 'bottom' ? 'bottom center' : ph.position === 'left' ? 'left center' : ph.position === 'right' ? 'right center' : `${ph.cropX ?? 50}% ${ph.cropY ?? 50}%`,
+                                    position: 'absolute',
+                                    left: `${frame.leftPercent}%`,
+                                    top: `${frame.topPercent}%`,
+                                    width: `${frame.widthPercent}%`,
+                                    height: `${frame.heightPercent}%`,
                                   }}
-                                />
-                              </div>
-                            ))}
+                                  className="overflow-hidden bg-slate-300 rounded-[1px]"
+                                >
+                                  <img
+                                    src={ph.url}
+                                    alt=""
+                                    className={`w-full h-full ${(ph.fit || frame.fit) === 'contain' ? 'object-contain' : 'object-cover'}`}
+                                    style={{
+                                      transform: `scale(${(ph.zoom || 1) * (ph.scale || 1)}) translate(${ph.x || 0}%, ${ph.y || 0}%) rotate(${ph.rotation || 0}deg)`,
+                                      objectPosition: ph.position === 'top' ? 'top center' : ph.position === 'bottom' ? 'bottom center' : ph.position === 'left' ? 'left center' : ph.position === 'right' ? 'right center' : `${ph.cropX ?? 50}% ${ph.cropY ?? 50}%`,
+                                    }}
+                                  />
+                                </div>
+                              );
+                            })}
                           </div>
                         ) : (
                           <div className="h-full border border-dashed border-slate-300 rounded-[2px] bg-slate-100 flex items-center justify-center">

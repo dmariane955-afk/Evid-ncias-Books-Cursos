@@ -26,6 +26,7 @@ import { CAMPUS_CONFIGS, AREA_CONFIGS } from '../data/defaults';
 import { EstacioLogo } from './EstacioLogo';
 import { CourseCoverModal } from './CourseCoverModal';
 import { getCourseCoverImage } from '../utils/courseCovers';
+import { compressImageToDataUrl } from '../services/storageService';
 
 interface HomePageProps {
   courses: Course[];
@@ -117,20 +118,20 @@ export const HomePage: React.FC<HomePageProps> = ({
     }
   };
 
-  const handleDrop = (e: React.DragEvent) => {
+  const handleDrop = async (e: React.DragEvent) => {
     e.preventDefault();
     setIsDraggingOver(false);
     const files = e.dataTransfer.files;
     if (files && files.length > 0) {
       const file = files[0];
-      const reader = new FileReader();
-      reader.onload = (event) => {
-        const url = event.target?.result as string;
-        if (url) {
-          onDropImageToNewActivity(url);
+      try {
+        const compressedUrl = await compressImageToDataUrl(file, 1280, 720, 0.75);
+        if (compressedUrl) {
+          onDropImageToNewActivity(compressedUrl);
         }
-      };
-      reader.readAsDataURL(file);
+      } catch (err) {
+        console.warn('Error compressing dropped image on HomePage:', err);
+      }
     }
   };
 
