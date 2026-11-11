@@ -45,6 +45,7 @@ import { EstacioLogo } from './EstacioLogo';
 import { getCourseCoverImage, COURSE_COVER_LIBRARY } from '../utils/courseCovers';
 import { uploadCoverImageToStorage, compressImageToDataUrl } from '../services/storageService';
 import { computePhotoLayout, SmartCompositionPreset, normalizePreset } from '../utils/photoLayoutEngine';
+import { getSummarySections } from '../utils/summaryStructure';
 import { Loader2 } from 'lucide-react';
 
 interface SlideCanvasProps {
@@ -53,6 +54,7 @@ interface SlideCanvasProps {
   slideIndex: number;
   totalSlides: number;
   onUpdateSlide: (updated: Partial<SlideData>) => void;
+  onSelectSlide?: (slideId: string) => void;
   onTriggerNewActivityModal?: (droppedImage?: string) => void;
   onOpenSyncSlideModal?: (slide: SlideData) => void;
   onSplitSlidePhotos?: (slideId: string) => void;
@@ -64,6 +66,7 @@ export const SlideCanvas: React.FC<SlideCanvasProps> = ({
   slideIndex,
   totalSlides,
   onUpdateSlide,
+  onSelectSlide,
   onTriggerNewActivityModal,
   onOpenSyncSlideModal,
   onSplitSlidePhotos,
@@ -1573,71 +1576,99 @@ export const SlideCanvas: React.FC<SlideCanvasProps> = ({
           </div>
         )}
 
-        {/* SLIDE: SUMÁRIO ANALÍTICO (ORGANIZADO EM COLUNAS COM CARDS NUMERADOS) */}
-        {slide.type === 'sumario' && (
-          <div className="flex-1 bg-white p-5 sm:p-7 flex flex-col justify-between select-text">
-            <div>
-              <div className="text-[11px] text-[#00A3E0] font-bold tracking-wider uppercase mb-1">
-                {book.courseName} · SUMÁRIO ANALÍTICO EXECUTIVO
+        {/* SLIDE: SUMÁRIO ANALÍTICO EXECUTIVO (SEÇÕES AGRUPADAS - EVIDÊNCIAS CONSOLIDADAS EM 'ATIVIDADES REALIZADAS') */}
+        {slide.type === 'sumario' && (() => {
+          const summarySections = getSummarySections(book);
+          return (
+            <div className="flex-1 bg-white p-5 sm:p-7 flex flex-col justify-between select-text">
+              <div>
+                <div className="text-[11px] text-[#00A3E0] font-bold tracking-wider uppercase mb-1">
+                  {book.courseName} · SUMÁRIO ANALÍTICO EXECUTIVO
+                </div>
+                <input
+                  type="text"
+                  value={slide.title}
+                  onChange={(e) => onUpdateSlide({ title: e.target.value })}
+                  className="w-full bg-transparent font-bold text-xl sm:text-2xl text-[#001D3D] focus:outline-hidden"
+                  placeholder="Sumário..."
+                />
+                <div className="text-xs text-slate-500 mt-1 border-b border-slate-200 pb-2 flex items-center justify-between">
+                  <span>Estrutura de apresentação e índice analítico do período acadêmico:</span>
+                  <span className="text-[11px] text-sky-700 font-medium hidden sm:inline">
+                    Clique em uma seção para navegar até seus slides
+                  </span>
+                </div>
               </div>
-              <input
-                type="text"
-                value={slide.title}
-                onChange={(e) => onUpdateSlide({ title: e.target.value })}
-                className="w-full bg-transparent font-bold text-xl sm:text-2xl text-[#001D3D] focus:outline-hidden"
-                placeholder="Sumário das Atividades..."
-              />
-              <div className="text-xs text-slate-500 mt-1 border-b border-slate-200 pb-2">
-                Estrutura de apresentação e índice analítico do período acadêmico:
-              </div>
-            </div>
 
-            <div className="grid grid-cols-2 gap-2.5 my-auto max-h-[310px] overflow-y-auto pr-1">
-              {book.slides
-                .filter((s) => s.type !== 'capa')
-                .map((topic) => (
+              <div className={`my-auto grid ${summarySections.length > 2 ? 'grid-cols-1 sm:grid-cols-2' : 'grid-cols-1'} gap-3 max-h-[320px] overflow-y-auto pr-1 py-1`}>
+                {summarySections.map((sec) => (
                   <div
-                    key={topic.id}
-                    className="flex items-center gap-2.5 p-2 rounded-lg bg-slate-50 border border-slate-200 hover:border-[#00A3E0] hover:bg-sky-50/40 transition-colors shadow-2xs"
+                    key={sec.id}
+                    onClick={() => {
+                      if (onSelectSlide && sec.targetSlideId) {
+                        onSelectSlide(sec.targetSlideId);
+                      }
+                    }}
+                    role="button"
+                    tabIndex={0}
+                    title={`Clique para navegar para ${sec.title} (${sec.slideRangeText})`}
+                    className={`flex items-start gap-3 p-3.5 rounded-xl border transition-all text-left cursor-pointer group shadow-2xs ${
+                      sec.isActivitiesGroup
+                        ? 'bg-sky-50/50 border-sky-200 hover:border-[#00A3E0] hover:bg-sky-100/60 ring-1 ring-sky-300/40'
+                        : 'bg-slate-50 border-slate-200 hover:border-[#00A3E0] hover:bg-sky-50/40'
+                    }`}
                   >
-                    <span className="w-6 h-6 rounded bg-[#E0F2FE] border border-[#00A3E0]/40 text-[#004B8D] font-mono font-bold text-xs flex items-center justify-center shrink-0">
-                      {topic.order < 10 ? `0${topic.order}` : topic.order}
+                    <span className="w-8 h-8 rounded-lg bg-[#E0F2FE] border border-[#00A3E0]/40 text-[#004B8D] font-mono font-bold text-sm flex items-center justify-center shrink-0 group-hover:scale-105 group-hover:bg-[#004B8D] group-hover:text-white transition-all shadow-2xs">
+                      {sec.orderNumber}
                     </span>
                     <div className="min-w-0 flex-1">
-                      <div className="text-xs font-bold text-slate-900 truncate">
-                        {topic.title}
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="text-sm font-bold text-slate-900 group-hover:text-[#004B8D] truncate transition-colors">
+                          {sec.title}
+                        </div>
+                        <span className="text-[10px] font-mono font-semibold px-2 py-0.5 rounded-full bg-slate-200/80 text-slate-700 shrink-0 group-hover:bg-sky-200 group-hover:text-sky-900 transition-colors">
+                          {sec.slideRangeText}
+                        </span>
                       </div>
-                      <div className="text-[10px] text-slate-500 truncate flex items-center gap-1.5">
-                        <span className="capitalize">{topic.type}</span>
-                        {topic.date && (
-                          <>
-                            <span>·</span>
-                            <span>{topic.date}</span>
-                          </>
-                        )}
+                      <div className="text-[11px] text-slate-600 mt-0.5 line-clamp-2 leading-tight">
+                        {sec.subtitle}
                       </div>
+                      {sec.isActivitiesGroup && (
+                        <div className="mt-2 flex items-center gap-1.5 text-[10px] font-semibold text-[#00A3E0] group-hover:text-[#004B8D] transition-colors">
+                          <Layers className="w-3 h-3 shrink-0" />
+                          <span>
+                            {sec.slideCount === 0
+                              ? 'Abrange qualquer atividade cadastrada'
+                              : `Abrange todas as ${sec.slideCount} atividades cadastradas no book`}
+                          </span>
+                          <span className="ml-auto opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-0.5 text-[#004B8D]">
+                            Acessar <ArrowRight className="w-2.5 h-2.5" />
+                          </span>
+                        </div>
+                      )}
                     </div>
                   </div>
                 ))}
-            </div>
+              </div>
 
-            {/* Slide footer */}
-            <div className="pt-2 border-t border-slate-200 flex items-center justify-between text-[11px] text-slate-500 gap-3">
-              <input
-                type="text"
-                value={slide.footerLeftText !== undefined ? slide.footerLeftText : `${campus.fullName} · ${book.courseName}`}
-                onChange={(e) => onUpdateSlide({ footerLeftText: e.target.value })}
-                className="bg-transparent font-medium text-slate-700 hover:bg-slate-100/70 focus:bg-white focus:ring-1 focus:ring-[#00A3E0] rounded px-1.5 py-0.5 border-b border-transparent hover:border-slate-300 focus:outline-hidden transition-colors truncate text-[11px]"
-              />
-              <input
-                type="text"
-                value={slide.footerRightText !== undefined ? slide.footerRightText : `Slide ${slideIndex} de ${totalSlides}`}
-                onChange={(e) => onUpdateSlide({ footerRightText: e.target.value })}
-                className="bg-transparent font-mono text-slate-500 text-right hover:bg-slate-100/70 focus:bg-white focus:ring-1 focus:ring-[#00A3E0] rounded px-1.5 py-0.5 border-b border-transparent hover:border-slate-300 focus:outline-hidden transition-colors w-28 text-[11px]"
-              />
+              {/* Slide footer */}
+              <div className="pt-2 border-t border-slate-200 flex items-center justify-between text-[11px] text-slate-500 gap-3">
+                <input
+                  type="text"
+                  value={slide.footerLeftText !== undefined ? slide.footerLeftText : `${campus.fullName} · ${book.courseName}`}
+                  onChange={(e) => onUpdateSlide({ footerLeftText: e.target.value })}
+                  className="bg-transparent font-medium text-slate-700 hover:bg-slate-100/70 focus:bg-white focus:ring-1 focus:ring-[#00A3E0] rounded px-1.5 py-0.5 border-b border-transparent hover:border-slate-300 focus:outline-hidden transition-colors truncate text-[11px]"
+                />
+                <input
+                  type="text"
+                  value={slide.footerRightText !== undefined ? slide.footerRightText : `Slide ${slideIndex} de ${totalSlides}`}
+                  onChange={(e) => onUpdateSlide({ footerRightText: e.target.value })}
+                  className="bg-transparent font-mono text-slate-500 text-right hover:bg-slate-100/70 focus:bg-white focus:ring-1 focus:ring-[#00A3E0] rounded px-1.5 py-0.5 border-b border-transparent hover:border-slate-300 focus:outline-hidden transition-colors w-28 text-[11px]"
+                />
+              </div>
             </div>
-          </div>
-        )}
+          );
+        })()}
 
         {/* SLIDE: APRESENTAÇÃO & CONTEXTUALIZAÇÃO (2 CARDS VISUAIS LADO A LADO IDÊNTICOS AO PPTX) */}
         {slide.type === 'apresentacao' && (

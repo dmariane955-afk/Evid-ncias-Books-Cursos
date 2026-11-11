@@ -293,8 +293,8 @@ export function createDefaultSlidesForCourse(course: Course, activitiesForCourse
     {
       id: `slide-sumario-${course.id}`,
       type: 'sumario',
-      title: 'Sumário das Atividades',
-      subtitle: 'Visão geral das atividades e evidências do semestre',
+      title: 'Sumário',
+      subtitle: 'Estrutura e índice analítico do período acadêmico',
       order: 2,
       photos: [],
     },

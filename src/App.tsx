@@ -34,6 +34,33 @@ import { Share2 } from 'lucide-react';
 const STORAGE_COURSES_KEY = 'estacio_academic_courses_v5';
 const STORAGE_ACTIVITIES_KEY = 'estacio_academic_activities_v5';
 const STORAGE_BOOKS_KEY = 'estacio_academic_books_v5';
+const STORAGE_DELETED_IDS_KEY = 'estacio_academic_deleted_ids_v1';
+
+function getStoredDeletedIds(): Set<string> {
+  try {
+    const raw = localStorage.getItem(STORAGE_DELETED_IDS_KEY);
+    if (raw) {
+      const arr = JSON.parse(raw);
+      if (Array.isArray(arr)) return new Set(arr);
+    }
+  } catch (e) {
+    console.warn(e);
+  }
+  return new Set();
+}
+
+function recordDeletedId(id: string) {
+  if (!id) return;
+  try {
+    const existing = getStoredDeletedIds();
+    existing.add(id);
+    const arr = Array.from(existing);
+    if (arr.length > 500) arr.splice(0, arr.length - 500);
+    localStorage.setItem(STORAGE_DELETED_IDS_KEY, JSON.stringify(arr));
+  } catch (e) {
+    console.warn(e);
+  }
+}
 
 interface HistoryState {
   courses: Course[];
@@ -44,76 +71,87 @@ interface HistoryState {
 }
 
 export default function App() {
-  // 1. Initial State from localStorage or defaults
+  // 1. Initial State from localStorage or defaults (strictly filtering out deleted items)
   const [courses, setCourses] = useState<Course[]>(() => {
+    const deletedIds = getStoredDeletedIds();
     try {
       const saved = localStorage.getItem(STORAGE_COURSES_KEY) || localStorage.getItem('estacio_academic_courses_v4');
       if (saved) {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed) && parsed.length > 0) {
-          return parsed.map((c: Course) => ({
-            ...c,
-            coverImage: c.coverImage || getCourseCoverImage(c.name, c.academicArea),
-          }));
+          return parsed
+            .filter((c: Course) => !deletedIds.has(c.id))
+            .map((c: Course) => ({
+              ...c,
+              coverImage: c.coverImage || getCourseCoverImage(c.name, c.academicArea),
+            }));
         }
       }
     } catch (e) {
       console.warn(e);
     }
-    return INITIAL_COURSES;
+    return INITIAL_COURSES.filter((c) => !deletedIds.has(c.id));
   });
 
   const [activities, setActivities] = useState<ActivityItem[]>(() => {
+    const deletedIds = getStoredDeletedIds();
     try {
       const saved = localStorage.getItem(STORAGE_ACTIVITIES_KEY) || localStorage.getItem('estacio_academic_activities_v4');
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) return parsed;
+        if (Array.isArray(parsed)) return parsed.filter((a: ActivityItem) => !deletedIds.has(a.id));
       }
     } catch (e) {
       console.warn(e);
     }
-    return INITIAL_ACTIVITIES;
+    return INITIAL_ACTIVITIES.filter((a) => !deletedIds.has(a.id));
   });
 
   const [books, setBooks] = useState<AcademicBook[]>(() => {
+    const deletedIds = getStoredDeletedIds();
     try {
       const saved = localStorage.getItem(STORAGE_BOOKS_KEY) || localStorage.getItem('estacio_academic_books_v4');
       if (saved) {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed) && parsed.length > 0) {
-          return parsed.map((b: AcademicBook) => {
-            const capaSlide = b.slides?.find((s) => s.type === 'capa');
-            const existingPhoto = capaSlide?.photos?.[0]?.url;
-            const coverUrl = b.coverImage || existingPhoto || getCourseCoverImage(b.courseName, b.academicArea);
-            const updatedSlides = b.slides.map((s) => {
-              if (s.type === 'capa') {
-                if (!s.photos || s.photos.length === 0) {
-                  return {
-                    ...s,
-                    photos: [{ id: `cover-${b.courseId}`, url: coverUrl, caption: b.courseName, fit: 'cover' as const }],
-                  };
-                } else if (b.coverImage && s.photos[0]?.url !== b.coverImage) {
-                  return {
-                    ...s,
-                    photos: [{ ...s.photos[0], url: b.coverImage }],
-                  };
-                }
-              }
-              return s;
+          return parsed
+            .filter((b: AcademicBook) => !deletedIds.has(b.id) && !deletedIds.has(b.courseId) && !deletedIds.has(`book-${b.courseId}`))
+            .map((b: AcademicBook) => {
+              const capaSlide = b.slides?.find((s) => s.type === 'capa');
+              const existingPhoto = capaSlide?.photos?.[0]?.url;
+              const coverUrl = b.coverImage || existingPhoto || getCourseCoverImage(b.courseName, b.academicArea);
+              const updatedSlides = (b.slides || [])
+                .filter((s) => !deletedIds.has(s.id) && (!s.activityId || !deletedIds.has(s.activityId)))
+                .map((s) => {
+                  if (s.type === 'capa') {
+                    if (!s.photos || s.photos.length === 0) {
+                      return {
+                        ...s,
+                        photos: [{ id: `cover-${b.courseId}`, url: coverUrl, caption: b.courseName, fit: 'cover' as const }],
+                      };
+                    } else if (b.coverImage && s.photos[0]?.url !== b.coverImage) {
+                      return {
+                        ...s,
+                        photos: [{ ...s.photos[0], url: b.coverImage }],
+                      };
+                    }
+                  }
+                  return s;
+                });
+              return {
+                ...b,
+                coverImage: coverUrl,
+                slides: updatedSlides,
+              };
             });
-            return {
-              ...b,
-              coverImage: coverUrl,
-              slides: updatedSlides,
-            };
-          });
         }
       }
     } catch (e) {
       console.warn(e);
     }
-    return createInitialBooks(INITIAL_COURSES, INITIAL_ACTIVITIES);
+    return createInitialBooks(INITIAL_COURSES, INITIAL_ACTIVITIES).filter(
+      (b) => !deletedIds.has(b.id) && !deletedIds.has(b.courseId) && !deletedIds.has(`book-${b.courseId}`)
+    );
   });
 
   // Current View & Campus separation (Curitiba and FATEC are separated by default)
@@ -300,15 +338,24 @@ export default function App() {
     }
   }, [courses, activities, books]);
 
-  // 3.1 Bidirectional Reconciliation: Guarantee every evidence slide in books has an active ActivityItem
+  // 3.1 Bidirectional Reconciliation: Guarantee every evidence slide in books has an active ActivityItem (respecting tombstones)
   useEffect(() => {
+    const deletedIds = getStoredDeletedIds();
     setActivities((prevActs) => {
       const existingIds = new Set(prevActs.map((a) => a.id));
       const additions: ActivityItem[] = [];
 
       books.forEach((b) => {
+        if (deletedIds.has(b.id) || deletedIds.has(b.courseId) || deletedIds.has(`book-${b.courseId}`)) return;
+
         (b.slides || []).forEach((slide) => {
-          if (slide.type === 'evidencia' && slide.activityId && !existingIds.has(slide.activityId)) {
+          if (
+            slide.type === 'evidencia' &&
+            slide.activityId &&
+            !existingIds.has(slide.activityId) &&
+            !deletedIds.has(slide.activityId) &&
+            !deletedIds.has(slide.id)
+          ) {
             const restoredAct: ActivityItem = {
               id: slide.activityId,
               bookId: b.id,
@@ -350,134 +397,83 @@ export default function App() {
   }, [books]);
 
   // 4. Real-time Cloud Database Synchronization (Firestore)
-  // Smart non-destructive bidirectional merge: NEVER erases locally created activities or evidence slides
+  // Non-destructive smart sync strictly respecting deleted tombstones
   useEffect(() => {
     const unsub = initFirestoreSync(
       {
         onCoursesLoaded: (loadedCourses) => {
-          if (loadedCourses && loadedCourses.length > 0) {
-            setCourses((currentCourses) => {
-              const remoteIds = new Set(loadedCourses.map((c) => c.id));
-              const merged = [...loadedCourses];
-              // Preserve any locally created courses not yet in remote
-              for (const localC of currentCourses) {
-                if (!remoteIds.has(localC.id)) {
-                  merged.push(localC);
-                  saveCourseToFirestore(localC);
-                }
+          if (loadedCourses) {
+            const deletedIds = getStoredDeletedIds();
+            const cleanCourses = loadedCourses.filter((c) => {
+              if (deletedIds.has(c.id)) {
+                deleteCourseFromFirestore(c.id);
+                return false;
               }
-              try {
-                localStorage.setItem(STORAGE_COURSES_KEY, JSON.stringify(merged));
-              } catch (e) {
-                console.warn(e);
-              }
-              return merged;
+              return true;
             });
+            setCourses(cleanCourses);
+            try {
+              localStorage.setItem(STORAGE_COURSES_KEY, JSON.stringify(cleanCourses));
+            } catch (e) {
+              console.warn(e);
+            }
           }
         },
         onActivitiesLoaded: (loadedActivities) => {
-          if (loadedActivities && loadedActivities.length > 0) {
-            setActivities((currentActivities) => {
-              const remoteMap = new Map(loadedActivities.map((a) => [a.id, a]));
-              const merged: ActivityItem[] = [...loadedActivities];
-
-              for (const localAct of currentActivities) {
-                if (!remoteMap.has(localAct.id)) {
-                  // Local activity not in Firestore snapshot: preserve and save to Firestore!
-                  merged.push(localAct);
-                  saveActivityToFirestore(localAct);
-                } else {
-                  // Compare timestamps: if local has more recent edit, keep local and sync to Firestore
-                  const remote = remoteMap.get(localAct.id)!;
-                  const localTime = new Date(localAct.updatedAt || 0).getTime();
-                  const remoteTime = new Date(remote.updatedAt || 0).getTime();
-                  if (localTime > remoteTime) {
-                    const idx = merged.findIndex((a) => a.id === localAct.id);
-                    if (idx !== -1) merged[idx] = localAct;
-                    saveActivityToFirestore(localAct);
-                  }
-                }
+          if (loadedActivities) {
+            const deletedIds = getStoredDeletedIds();
+            const cleanActivities = loadedActivities.filter((a) => {
+              if (deletedIds.has(a.id)) {
+                deleteActivityFromFirestore(a.id);
+                return false;
               }
-
-              try {
-                localStorage.setItem(STORAGE_ACTIVITIES_KEY, JSON.stringify(merged));
-              } catch (e) {
-                console.warn(e);
-              }
-              return merged;
+              return true;
             });
+            setActivities(cleanActivities);
+            try {
+              localStorage.setItem(STORAGE_ACTIVITIES_KEY, JSON.stringify(cleanActivities));
+            } catch (e) {
+              console.warn(e);
+            }
           }
         },
         onBooksLoaded: (loadedBooks) => {
-          if (loadedBooks && loadedBooks.length > 0) {
-            setBooks((currentBooks) => {
-              const localBooksMap = new Map(currentBooks.map((b) => [b.id, b]));
-
-              const mergedBooks = loadedBooks.map((remoteBook) => {
-                const localBook = localBooksMap.get(remoteBook.id);
-                if (!localBook) {
-                  const capaSlide = remoteBook.slides?.find((s) => s.type === 'capa');
-                  const capaPhotoUrl = capaSlide?.photos?.[0]?.url;
-                  const effectiveCover = remoteBook.coverImage || capaPhotoUrl;
-                  return {
-                    ...remoteBook,
-                    coverImage: effectiveCover || remoteBook.coverImage,
-                  };
+          if (loadedBooks) {
+            const deletedIds = getStoredDeletedIds();
+            const cleanBooks = loadedBooks
+              .filter((b) => {
+                if (deletedIds.has(b.id) || deletedIds.has(b.courseId) || deletedIds.has(`book-${b.courseId}`)) {
+                  deleteBookFromFirestore(b.id);
+                  deleteBookFromFirestore(`book-${b.courseId}`);
+                  return false;
                 }
-
-                // Remote book exists and local book exists: merge slides to preserve local evidence slides!
-                const remoteSlideIds = new Set((remoteBook.slides || []).map((s) => s.id));
-                const mergedSlides = [...(remoteBook.slides || [])];
-                let shouldSyncBack = false;
-
-                for (const localSlide of (localBook.slides || [])) {
-                  if (!remoteSlideIds.has(localSlide.id)) {
-                    // Local slide not in remote book (e.g. newly added evidence slide)
-                    mergedSlides.push(localSlide);
-                    shouldSyncBack = true;
+                return true;
+              })
+              .map((b) => {
+                const cleanSlides = (b.slides || []).filter(
+                  (s) => !deletedIds.has(s.id) && (!s.activityId || !deletedIds.has(s.activityId))
+                ).map((s) => {
+                  if (s.type === 'sumario' && s.title === 'Sumário das Atividades') {
+                    return { ...s, title: 'Sumário' };
                   }
-                }
-
-                const sortedSlides = mergedSlides.sort((s1, s2) => (s1.order || 0) - (s2.order || 0));
-
-                const capaSlide = sortedSlides.find((s) => s.type === 'capa');
+                  return s;
+                });
+                const capaSlide = cleanSlides.find((s) => s.type === 'capa');
                 const capaPhotoUrl = capaSlide?.photos?.[0]?.url;
-                const effectiveCover = localBook.coverImage || remoteBook.coverImage || capaPhotoUrl;
-
-                const finalBook: AcademicBook = {
-                  ...remoteBook,
-                  ...localBook,
-                  coverImage: effectiveCover || remoteBook.coverImage,
-                  slides: sortedSlides,
-                  updatedAt: localBook.updatedAt && remoteBook.updatedAt
-                    ? new Date(localBook.updatedAt) > new Date(remoteBook.updatedAt)
-                      ? localBook.updatedAt
-                      : remoteBook.updatedAt
-                    : localBook.updatedAt || remoteBook.updatedAt || new Date().toISOString(),
+                const effectiveCover = b.coverImage || capaPhotoUrl;
+                return {
+                  ...b,
+                  coverImage: effectiveCover || b.coverImage,
+                  slides: cleanSlides,
                 };
-
-                if (shouldSyncBack) {
-                  saveBookToFirestore(finalBook);
-                }
-                return finalBook;
               });
 
-              // Include any local book that wasn't in remote at all
-              const remoteBookIds = new Set(loadedBooks.map((b) => b.id));
-              for (const localBook of currentBooks) {
-                if (!remoteBookIds.has(localBook.id)) {
-                  mergedBooks.push(localBook);
-                  saveBookToFirestore(localBook);
-                }
-              }
-
-              try {
-                localStorage.setItem(STORAGE_BOOKS_KEY, JSON.stringify(mergedBooks));
-              } catch (e) {
-                console.warn(e);
-              }
-              return mergedBooks;
-            });
+            setBooks(cleanBooks);
+            try {
+              localStorage.setItem(STORAGE_BOOKS_KEY, JSON.stringify(cleanBooks));
+            } catch (e) {
+              console.warn(e);
+            }
           }
         },
         onStatusChange: (status, message) => {
@@ -927,33 +923,75 @@ export default function App() {
       isOpen: true,
       title: 'Excluir Book?',
       itemName: `Book de Evidências — ${book.courseName}`,
-      description: `Esta ação removerá definitivamente o Book do curso ${book.courseName} (${book.campus === 'curitiba' ? 'Curitiba' : 'FATEC'}).`,
-      warningNote: 'Conteúdos que também estão vinculados a outros Books (como na FATEC ou em outros cursos) continuarão preservados nos respectivos ambientes.',
+      description: `Esta ação removerá definitivamente o Book e o curso ${book.courseName} (${book.campus === 'curitiba' ? 'Curitiba' : 'FATEC'}) da plataforma e do banco de dados.`,
+      warningNote: 'Conteúdos compartilhados que também estão vinculados a outros Books continuarão preservados nos respectivos ambientes.',
       onConfirm: () => {
         pushHistorySnapshot();
-        // Remove book
-        const remainingBooks = books.filter((b) => b.id !== book.id);
-        setBooks(remainingBooks);
-        deleteBookFromFirestore(book.id);
+        const bookId = book.id;
+        const courseId = book.courseId;
 
-        // Update activities: remove this courseId from targetCourseIds
-        setActivities((prevActs) =>
-          prevActs
+        // 1. Record tombstones so it can NEVER be resurrected
+        recordDeletedId(bookId);
+        recordDeletedId(`book-${courseId}`);
+        recordDeletedId(courseId);
+
+        // 2. Remove book from books state & localStorage
+        setBooks((prevBooks) => {
+          const remaining = prevBooks.filter((b) => b.id !== bookId && b.courseId !== courseId);
+          try {
+            localStorage.setItem(STORAGE_BOOKS_KEY, JSON.stringify(remaining));
+          } catch (e) {
+            console.warn(e);
+          }
+          return remaining;
+        });
+
+        // 3. Remove course from courses state & localStorage
+        setCourses((prevCourses) => {
+          const remaining = prevCourses.filter((c) => c.id !== courseId);
+          try {
+            localStorage.setItem(STORAGE_COURSES_KEY, JSON.stringify(remaining));
+          } catch (e) {
+            console.warn(e);
+          }
+          return remaining;
+        });
+
+        // 4. Delete permanently in Firestore
+        deleteBookFromFirestore(bookId);
+        deleteBookFromFirestore(`book-${courseId}`);
+        deleteCourseFromFirestore(courseId);
+
+        // 5. Update activities: remove this courseId from targetCourseIds
+        setActivities((prevActs) => {
+          const updated = prevActs
             .map((act) => ({
               ...act,
-              targetCourseIds: act.targetCourseIds.filter((cId) => cId !== book.courseId),
+              targetCourseIds: act.targetCourseIds.filter((cId) => cId !== courseId),
             }))
-            .filter((act) => act.targetCourseIds.length > 0) // only delete activity if it has zero books left!
-        );
+            .filter((act) => act.targetCourseIds.length > 0);
 
-        if (currentCourseId === book.courseId) {
-          const nextBook = remainingBooks.find((b) => b.campus === currentCampus) || remainingBooks[0];
-          if (nextBook) {
-            setCurrentCourseId(nextBook.courseId);
-          } else {
-            setCurrentView('home');
+          try {
+            localStorage.setItem(STORAGE_ACTIVITIES_KEY, JSON.stringify(updated));
+          } catch (e) {
+            console.warn(e);
           }
-        }
+          return updated;
+        });
+
+        // 6. Navigation safely
+        setCourses((current) => {
+          const remaining = current.filter((c) => c.id !== courseId);
+          if (currentCourseId === courseId) {
+            const nextCourse = remaining.find((c) => c.campus === currentCampus) || remaining[0];
+            if (nextCourse) {
+              setCurrentCourseId(nextCourse.id);
+            } else {
+              setCurrentView('home');
+            }
+          }
+          return remaining;
+        });
       },
     });
   };
@@ -965,50 +1003,86 @@ export default function App() {
       title: 'Excluir curso e respectivo Book?',
       itemName: `${course.name} (${course.campus === 'curitiba' ? 'Curitiba' : 'FATEC'})`,
       description: 'Esta ação removerá o curso e seu Book permanentemente da plataforma e do banco de dados na nuvem.',
-      warningNote: 'A exclusão é sincronizada em tempo real para todos os usuários com o link.',
+      warningNote: 'A exclusão é definitiva e sincronizada em tempo real para todos os usuários.',
       onConfirm: () => {
         pushHistorySnapshot();
-        // Remove course locally and in Firestore
-        const remainingCourses = courses.filter((c) => c.id !== course.id);
-        setCourses(remainingCourses);
-        deleteCourseFromFirestore(course.id);
+        const courseId = course.id;
 
-        // Remove course books locally and in Firestore
-        const booksToDelete = books.filter((b) => b.courseId === course.id);
-        booksToDelete.forEach((b) => deleteBookFromFirestore(b.id));
-        deleteBookFromFirestore(`book-${course.id}`); // Guarantee default ID as well
+        // 1. Record tombstones
+        recordDeletedId(courseId);
+        recordDeletedId(`book-${courseId}`);
 
-        const remainingBooks = books.filter((b) => b.courseId !== course.id);
-        setBooks(remainingBooks);
+        // 2. Remove course locally and in Firestore
+        setCourses((prevCourses) => {
+          const remaining = prevCourses.filter((c) => c.id !== courseId);
+          try {
+            localStorage.setItem(STORAGE_COURSES_KEY, JSON.stringify(remaining));
+          } catch (e) {
+            console.warn(e);
+          }
+          return remaining;
+        });
+        deleteCourseFromFirestore(courseId);
 
-        // Remove from activities and sync with Firestore
-        setActivities((prevActs) =>
-          prevActs
+        // 3. Remove course books locally and in Firestore
+        setBooks((prevBooks) => {
+          const booksToDelete = prevBooks.filter((b) => b.courseId === courseId || b.id === `book-${courseId}`);
+          booksToDelete.forEach((b) => {
+            recordDeletedId(b.id);
+            deleteBookFromFirestore(b.id);
+          });
+          deleteBookFromFirestore(`book-${courseId}`);
+
+          const remaining = prevBooks.filter((b) => b.courseId !== courseId && b.id !== `book-${courseId}`);
+          try {
+            localStorage.setItem(STORAGE_BOOKS_KEY, JSON.stringify(remaining));
+          } catch (e) {
+            console.warn(e);
+          }
+          return remaining;
+        });
+
+        // 4. Remove from activities and sync with Firestore
+        setActivities((prevActs) => {
+          const updated = prevActs
             .map((act) => {
-              const remainingTargets = act.targetCourseIds.filter((cId) => cId !== course.id);
+              const remainingTargets = act.targetCourseIds.filter((cId) => cId !== courseId);
               const updatedAct = {
                 ...act,
                 targetCourseIds: remainingTargets,
                 isShared: remainingTargets.length > 1,
               };
               if (remainingTargets.length === 0) {
+                recordDeletedId(act.id);
                 deleteActivityFromFirestore(act.id);
               } else {
                 saveActivityToFirestore(updatedAct);
               }
               return updatedAct;
             })
-            .filter((act) => act.targetCourseIds.length > 0)
-        );
+            .filter((act) => act.targetCourseIds.length > 0);
 
-        if (currentCourseId === course.id) {
-          const nextCourse = remainingCourses.find((c) => c.campus === currentCampus) || remainingCourses[0];
-          if (nextCourse) {
-            setCurrentCourseId(nextCourse.id);
-          } else {
-            setCurrentView('home');
+          try {
+            localStorage.setItem(STORAGE_ACTIVITIES_KEY, JSON.stringify(updated));
+          } catch (e) {
+            console.warn(e);
           }
-        }
+          return updated;
+        });
+
+        // 5. Navigation
+        setCourses((current) => {
+          const remaining = current.filter((c) => c.id !== courseId);
+          if (currentCourseId === courseId) {
+            const nextCourse = remaining.find((c) => c.campus === currentCampus) || remaining[0];
+            if (nextCourse) {
+              setCurrentCourseId(nextCourse.id);
+            } else {
+              setCurrentView('home');
+            }
+          }
+          return remaining;
+        });
       },
     });
   };
@@ -1022,47 +1096,107 @@ export default function App() {
       if (c) campusesInvolved.add(c.campus);
     });
 
+    const performFullDelete = () => {
+      pushHistorySnapshot();
+      recordDeletedId(activity.id);
+
+      // 1. Delete from activities state & localStorage
+      setActivities((prev) => {
+        const remaining = prev.filter((a) => a.id !== activity.id);
+        try {
+          localStorage.setItem(STORAGE_ACTIVITIES_KEY, JSON.stringify(remaining));
+        } catch (e) {
+          console.warn(e);
+        }
+        return remaining;
+      });
+
+      // 2. Delete from Firestore
+      deleteActivityFromFirestore(activity.id);
+
+      // 3. Remove slide from all books, update state, localStorage, and Firestore
+      setBooks((prevBooks) => {
+        const updatedBooks = prevBooks.map((b) => {
+          const hasSlide = (b.slides || []).some((s) => s.activityId === activity.id);
+          if (!hasSlide) return b;
+
+          const newSlides = b.slides
+            .filter((s) => s.activityId !== activity.id)
+            .map((s, idx) => ({ ...s, order: idx + 1 }));
+
+          const updatedB = { ...b, slides: newSlides, updatedAt: new Date().toISOString() };
+          saveBookToFirestore(updatedB);
+          return updatedB;
+        });
+
+        try {
+          localStorage.setItem(STORAGE_BOOKS_KEY, JSON.stringify(updatedBooks));
+        } catch (e) {
+          console.warn(e);
+        }
+        return updatedBooks;
+      });
+    };
+
     if (campusesInvolved.size > 1) {
       // Synced between Curitiba and FATEC: ask scope!
       setDeleteSyncedState({
         isOpen: true,
         activity,
         onConfirm: (scope) => {
-          pushHistorySnapshot();
           if (scope === 'current') {
+            pushHistorySnapshot();
             // Remove only courses of current campus from targetCourseIds
             const remainingTargetIds = activity.targetCourseIds.filter((cId) => {
               const c = courses.find((course) => course.id === cId);
               return c?.campus !== currentCampus;
             });
 
-            setActivities((prev) =>
-              prev.map((act) =>
-                act.id === activity.id
-                  ? { ...act, targetCourseIds: remainingTargetIds, isShared: remainingTargetIds.length > 1 }
-                  : act
-              )
-            );
+            if (remainingTargetIds.length === 0) {
+              performFullDelete();
+              return;
+            }
 
-            // Remove slides from current campus books
-            setBooks((prevBooks) =>
-              prevBooks.map((b) => {
+            const updatedAct: ActivityItem = {
+              ...activity,
+              targetCourseIds: remainingTargetIds,
+              syncedCampuses: [otherCampus],
+              isShared: remainingTargetIds.length > 1,
+              updatedAt: new Date().toISOString(),
+            };
+
+            setActivities((prev) => {
+              const updated = prev.map((act) => (act.id === activity.id ? updatedAct : act));
+              try {
+                localStorage.setItem(STORAGE_ACTIVITIES_KEY, JSON.stringify(updated));
+              } catch (e) {
+                console.warn(e);
+              }
+              return updated;
+            });
+            saveActivityToFirestore(updatedAct);
+
+            // Remove slides from current campus books & save to Firestore
+            setBooks((prevBooks) => {
+              const updatedBooks = prevBooks.map((b) => {
                 if (b.campus !== currentCampus) return b;
-                return {
-                  ...b,
-                  slides: b.slides.filter((s) => s.activityId !== activity.id).map((s, idx) => ({ ...s, order: idx + 1 })),
-                };
-              })
-            );
+                const newSlides = b.slides
+                  .filter((s) => s.activityId !== activity.id)
+                  .map((s, idx) => ({ ...s, order: idx + 1 }));
+                const updatedB = { ...b, slides: newSlides, updatedAt: new Date().toISOString() };
+                saveBookToFirestore(updatedB);
+                return updatedB;
+              });
+
+              try {
+                localStorage.setItem(STORAGE_BOOKS_KEY, JSON.stringify(updatedBooks));
+              } catch (e) {
+                console.warn(e);
+              }
+              return updatedBooks;
+            });
           } else {
-            // Delete completely from all books and from activities
-            setActivities((prev) => prev.filter((a) => a.id !== activity.id));
-            setBooks((prev) =>
-              prev.map((b) => ({
-                ...b,
-                slides: b.slides.filter((s) => s.activityId !== activity.id).map((s, idx) => ({ ...s, order: idx + 1 })),
-              }))
-            );
+            performFullDelete();
           }
         },
       });
@@ -1072,18 +1206,8 @@ export default function App() {
         isOpen: true,
         title: 'Excluir Atividade?',
         itemName: activity.title,
-        description: 'Esta ação removerá permanentemente esta atividade do Book.',
-        onConfirm: () => {
-          pushHistorySnapshot();
-          setActivities((prev) => prev.filter((a) => a.id !== activity.id));
-          deleteActivityFromFirestore(activity.id);
-          setBooks((prev) =>
-            prev.map((b) => ({
-              ...b,
-              slides: b.slides.filter((s) => s.activityId !== activity.id).map((s, idx) => ({ ...s, order: idx + 1 })),
-            }))
-          );
-        },
+        description: 'Esta ação removerá permanentemente esta atividade do Book e do banco de dados.',
+        onConfirm: performFullDelete,
       });
     }
   };
@@ -1387,8 +1511,8 @@ export default function App() {
         {
           id: `slide-sumario-${courseId}`,
           type: 'sumario',
-          title: 'Sumário das Atividades',
-          subtitle: 'Visão geral das evidências do semestre',
+          title: 'Sumário',
+          subtitle: 'Estrutura e índice analítico do período acadêmico',
           order: 2,
           photos: [],
         },
@@ -1456,8 +1580,8 @@ export default function App() {
           {
             id: `slide-sumario-${counterpartCourseId}`,
             type: 'sumario',
-            title: 'Sumário das Atividades',
-            subtitle: 'Visão geral das evidências do semestre',
+            title: 'Sumário',
+            subtitle: 'Estrutura e índice analítico do período acadêmico',
             order: 2,
             photos: [],
           },
@@ -1625,14 +1749,18 @@ export default function App() {
 
   const handleDeleteSlide = (slideId: string) => {
     if (currentBook.slides.length <= 1) return;
+    const targetSlide = currentBook.slides.find((s) => s.id === slideId);
+
     setDeleteConfirmState({
       isOpen: true,
       title: 'Excluir slide?',
-      itemName: activeSlide?.title || 'Slide selecionado',
+      itemName: targetSlide?.title || activeSlide?.title || 'Slide selecionado',
       description: 'Deseja excluir este slide do Book de Evidências?',
       warningNote: 'A exclusão é salva permanentemente no banco de dados em tempo real.',
       onConfirm: () => {
         pushHistorySnapshot();
+        recordDeletedId(slideId);
+
         const updated = currentBook.slides
           .filter((s) => s.id !== slideId)
           .map((s, idx) => ({ ...s, order: idx + 1 }));
@@ -1643,6 +1771,25 @@ export default function App() {
           updatedAt: new Date().toISOString(),
         };
         persistBookUpdate(updatedBook, true);
+
+        // If it was an evidence slide, clean up associated activity if not used by another slide
+        if (targetSlide?.activityId) {
+          const actId = targetSlide.activityId;
+          const isStillUsed = updated.some((s) => s.activityId === actId);
+          if (!isStillUsed) {
+            recordDeletedId(actId);
+            setActivities((prev) => {
+              const remaining = prev.filter((a) => a.id !== actId);
+              try {
+                localStorage.setItem(STORAGE_ACTIVITIES_KEY, JSON.stringify(remaining));
+              } catch (e) {
+                console.warn(e);
+              }
+              return remaining;
+            });
+            deleteActivityFromFirestore(actId);
+          }
+        }
 
         if (activeSlideId === slideId) {
           setActiveSlideId(updated[0]?.id || '');
@@ -1837,6 +1984,7 @@ export default function App() {
               slideIndex={currentBook.slides.findIndex((s) => s.id === activeSlide.id) + 1}
               totalSlides={currentBook.slides.length}
               onUpdateSlide={handleUpdateActiveSlide}
+              onSelectSlide={setActiveSlideId}
               onTriggerNewActivityModal={(droppedImage) => {
                 setEditingActivity(null);
                 setDroppedImageForNewActivity(droppedImage || null);

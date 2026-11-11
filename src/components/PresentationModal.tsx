@@ -11,13 +11,16 @@ import {
   BookOpen,
   Calendar,
   MapPin,
-  Users2
+  Users2,
+  Layers,
+  ArrowRight
 } from 'lucide-react';
 import { AcademicBook, SlideData } from '../types';
 import { CAMPUS_CONFIGS } from '../data/defaults';
 import { EstacioLogo } from './EstacioLogo';
 import { getCourseCoverImage } from '../utils/courseCovers';
 import { computePhotoLayout } from '../utils/photoLayoutEngine';
+import { getSummarySections } from '../utils/summaryStructure';
 
 interface PresentationModalProps {
   isOpen: boolean;
@@ -237,48 +240,79 @@ export const PresentationModal: React.FC<PresentationModalProps> = ({
           );
         })()}
 
-        {currentSlide.type === 'sumario' && (
-          <div className="flex-1 bg-white p-8 flex flex-col justify-between">
-            <div>
-              <div className="text-xs text-[#00A3E0] font-bold tracking-wider uppercase mb-1">
-                {book.courseName} · SUMÁRIO ANALÍTICO
+        {/* SUMÁRIO ANALÍTICO NA APRESENTAÇÃO */}
+        {currentSlide.type === 'sumario' && (() => {
+          const summarySections = getSummarySections(book);
+          return (
+            <div className="flex-1 bg-white p-8 sm:p-12 flex flex-col justify-between">
+              <div>
+                <div className="text-xs text-[#00A3E0] font-bold tracking-wider uppercase mb-1">
+                  {book.courseName} · SUMÁRIO ANALÍTICO
+                </div>
+                <h2 className="text-2xl sm:text-3xl font-bold text-[#001D3D] border-b border-slate-200 pb-2">
+                  {currentSlide.title}
+                </h2>
+                <div className="text-xs text-slate-500 mt-2 flex items-center justify-between">
+                  <span>Estrutura de apresentação e índice analítico do período acadêmico:</span>
+                  <span className="text-xs text-sky-700 font-medium">
+                    Clique em qualquer seção para ir direto aos slides
+                  </span>
+                </div>
               </div>
-              <h2 className="text-2xl font-bold text-[#001D3D] border-b border-slate-200 pb-2">
-                {currentSlide.title}
-              </h2>
-            </div>
 
-            <div className="grid grid-cols-2 gap-3 my-auto">
-              {book.slides
-                .filter((s) => s.type !== 'capa')
-                .map((topic) => (
-                  <div
-                    key={topic.id}
-                    className="flex items-start gap-2.5 p-2 rounded-lg bg-slate-50 border border-slate-200"
+              <div className={`my-auto grid ${summarySections.length > 2 ? 'grid-cols-1 sm:grid-cols-2' : 'grid-cols-1'} gap-4 max-h-[420px] overflow-y-auto pr-2 py-2`}>
+                {summarySections.map((sec) => (
+                  <button
+                    key={sec.id}
+                    onClick={() => setCurrentIndex(sec.targetSlideIndex)}
+                    className={`flex items-start gap-4 p-4 rounded-xl border text-left transition-all cursor-pointer group shadow-xs ${
+                      sec.isActivitiesGroup
+                        ? 'bg-sky-50/60 border-sky-300 hover:border-[#00A3E0] hover:bg-sky-100/70 hover:shadow-md ring-1 ring-sky-300/40'
+                        : 'bg-slate-50 border-slate-200 hover:border-[#00A3E0] hover:bg-sky-50/50 hover:shadow-md'
+                    }`}
                   >
-                    <span className="w-6 h-6 rounded bg-[#E0F2FE] text-[#004B8D] font-mono font-bold text-xs flex items-center justify-center shrink-0">
-                      {topic.order < 10 ? `0${topic.order}` : topic.order}
+                    <span className="w-10 h-10 rounded-lg bg-[#E0F2FE] border border-[#00A3E0]/40 text-[#004B8D] font-mono font-bold text-base flex items-center justify-center shrink-0 group-hover:scale-105 group-hover:bg-[#004B8D] group-hover:text-white transition-all shadow-2xs">
+                      {sec.orderNumber}
                     </span>
-                    <div className="min-w-0">
-                      <div className="text-xs font-bold text-slate-900 truncate">
-                        {topic.title}
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="text-base font-bold text-slate-900 group-hover:text-[#004B8D] truncate transition-colors">
+                          {sec.title}
+                        </div>
+                        <span className="text-xs font-mono font-semibold px-2.5 py-0.5 rounded-full bg-slate-200/80 text-slate-700 shrink-0 group-hover:bg-sky-200 group-hover:text-sky-900 transition-colors">
+                          {sec.slideRangeText}
+                        </span>
                       </div>
-                      <div className="text-[11px] text-slate-500 truncate">
-                        {topic.subtitle || 'Registro acadêmico'}
+                      <div className="text-xs text-slate-600 mt-1 line-clamp-2 leading-relaxed">
+                        {sec.subtitle}
                       </div>
+                      {sec.isActivitiesGroup && (
+                        <div className="mt-2.5 flex items-center gap-1.5 text-xs font-semibold text-[#00A3E0] group-hover:text-[#004B8D] transition-colors">
+                          <Layers className="w-3.5 h-3.5 shrink-0" />
+                          <span>
+                            {sec.slideCount === 0
+                              ? 'Abrange qualquer atividade cadastrada'
+                              : `Abrange todas as ${sec.slideCount} atividades cadastradas no book`}
+                          </span>
+                          <span className="ml-auto flex items-center gap-1 text-[#004B8D] font-bold group-hover:translate-x-0.5 transition-transform">
+                            Acessar <ArrowRight className="w-3.5 h-3.5" />
+                          </span>
+                        </div>
+                      )}
                     </div>
-                  </div>
+                  </button>
                 ))}
-            </div>
+              </div>
 
-            <div className="pt-2 border-t border-slate-200 flex items-center justify-between text-xs text-slate-500">
-              <span>{campus.fullName}</span>
-              <span className="font-mono">
-                Slide {currentIndex + 1} de {totalSlides}
-              </span>
+              <div className="pt-3 border-t border-slate-200 flex items-center justify-between text-xs text-slate-500">
+                <span className="font-medium text-slate-600">{campus.fullName} · {book.courseName}</span>
+                <span className="font-mono">
+                  Slide {currentIndex + 1} de {totalSlides}
+                </span>
+              </div>
             </div>
-          </div>
-        )}
+          );
+        })()}
 
         {currentSlide.type === 'evidencia' && (
           <div className="flex-1 bg-white p-8 flex flex-col justify-between">

@@ -4,6 +4,7 @@ import { AcademicBook, SlideData, PhotoItem } from '../types';
 import { CAMPUS_CONFIGS, AREA_CONFIGS } from '../data/defaults';
 import { getCourseCoverImage } from './courseCovers';
 import { computePhotoLayout } from './photoLayoutEngine';
+import { getSummarySections } from './summaryStructure';
 import estacioLogoOfficial from '../assets/images/estacio_logo_oficial.png';
 
 function cleanColorHex(colorStr?: string, defaultColor: string = '000000'): string {
@@ -455,7 +456,7 @@ export async function exportToPowerPoint(book: AcademicBook): Promise<void> {
         }
       );
     } else if (s.type === 'sumario') {
-      // SLIDE 02 - SUMÁRIO EXECUTIVO
+      // SLIDE 02 - SUMÁRIO EXECUTIVO (CONSOLIDAÇÃO DE SEÇÕES E ATIVIDADES REALIZADAS)
       const slide = pres.addSlide();
       slide.background = { color: 'FFFFFF' };
       addInstitutionalChrome(slide, slideNumber, totalSlides, 'SUMÁRIO EXECUTIVO', s.title, s);
@@ -471,92 +472,130 @@ export async function exportToPowerPoint(book: AcademicBook): Promise<void> {
         fontFace: 'Arial',
       });
 
-      // Filter evidence slides and other topics
-      const topics = book.slides.filter((item) => item.type !== 'capa');
-      const col1 = topics.slice(0, 5);
-      const col2 = topics.slice(5, 10);
+      // Unified structured sections (evidence grouped under 'Evidências')
+      const summarySections = getSummarySections(book);
+      const isTwoCols = summarySections.length > 3;
+      const col1 = isTwoCols ? summarySections.slice(0, Math.ceil(summarySections.length / 2)) : summarySections;
+      const col2 = isTwoCols ? summarySections.slice(Math.ceil(summarySections.length / 2)) : [];
 
       // Col 1 items
-      col1.forEach((topic, idx) => {
-        const topY = 1.55 + idx * 0.65;
+      col1.forEach((sec, idx) => {
+        const topY = 1.55 + idx * 0.82;
+        const colW = isTwoCols ? 4.05 : 8.4;
+
+        // Card background shape
         slide.addShape(pres.ShapeType.rect, {
           x: 0.8,
           y: topY,
-          w: 0.4,
-          h: 0.4,
+          w: colW,
+          h: 0.72,
+          fill: { color: sec.isActivitiesGroup ? 'F0F9FF' : 'F8FAFC' },
+          line: { color: sec.isActivitiesGroup ? cyanAccent : 'E2E8F0', width: 1 },
+        });
+
+        // Number Badge
+        slide.addShape(pres.ShapeType.rect, {
+          x: 0.92,
+          y: topY + 0.13,
+          w: 0.46,
+          h: 0.46,
           fill: { color: 'E0F2FE' },
           line: { color: cyanAccent, width: 1 },
         });
-        slide.addText(`${topic.order < 10 ? '0' : ''}${topic.order}`, {
-          x: 0.8,
-          y: topY + 0.05,
-          w: 0.4,
-          h: 0.3,
-          fontSize: 9,
+        slide.addText(sec.orderNumber, {
+          x: 0.92,
+          y: topY + 0.16,
+          w: 0.46,
+          h: 0.4,
+          fontSize: 10,
           bold: true,
           align: 'center',
           color: primaryBlue,
           fontFace: 'Arial',
         });
-        slide.addText(topic.title, {
-          x: 1.3,
-          y: topY,
-          w: 3.6,
-          h: 0.25,
-          fontSize: 9.5,
+
+        // Title
+        slide.addText(sec.title, {
+          x: 1.48,
+          y: topY + 0.08,
+          w: colW - 1.6,
+          h: 0.28,
+          fontSize: 10.5,
           bold: true,
           color: darkNavy,
           fontFace: 'Arial',
         });
-        slide.addText(topic.subtitle || 'Registro acadêmico oficial', {
-          x: 1.3,
-          y: topY + 0.22,
-          w: 3.6,
-          h: 0.25,
-          fontSize: 8,
+
+        // Subtitle + range
+        const subText = `${sec.subtitle} · ${sec.slideRangeText}`;
+        slide.addText(subText, {
+          x: 1.48,
+          y: topY + 0.36,
+          w: colW - 1.6,
+          h: 0.28,
+          fontSize: 8.5,
           color: textMuted,
           fontFace: 'Arial',
         });
       });
 
       // Col 2 items
-      col2.forEach((topic, idx) => {
-        const topY = 1.55 + idx * 0.65;
+      col2.forEach((sec, idx) => {
+        const topY = 1.55 + idx * 0.82;
+        const colW = 4.05;
+        const startX = 5.15;
+
+        // Card background shape
         slide.addShape(pres.ShapeType.rect, {
-          x: 5.1,
+          x: startX,
           y: topY,
-          w: 0.4,
-          h: 0.4,
+          w: colW,
+          h: 0.72,
+          fill: { color: sec.isActivitiesGroup ? 'F0F9FF' : 'F8FAFC' },
+          line: { color: sec.isActivitiesGroup ? cyanAccent : 'E2E8F0', width: 1 },
+        });
+
+        // Number Badge
+        slide.addShape(pres.ShapeType.rect, {
+          x: startX + 0.12,
+          y: topY + 0.13,
+          w: 0.46,
+          h: 0.46,
           fill: { color: 'E0F2FE' },
           line: { color: cyanAccent, width: 1 },
         });
-        slide.addText(`${topic.order < 10 ? '0' : ''}${topic.order}`, {
-          x: 5.1,
-          y: topY + 0.05,
-          w: 0.4,
-          h: 0.3,
-          fontSize: 9,
+        slide.addText(sec.orderNumber, {
+          x: startX + 0.12,
+          y: topY + 0.16,
+          w: 0.46,
+          h: 0.4,
+          fontSize: 10,
           bold: true,
           align: 'center',
           color: primaryBlue,
           fontFace: 'Arial',
         });
-        slide.addText(topic.title, {
-          x: 5.6,
-          y: topY,
-          w: 3.6,
-          h: 0.25,
-          fontSize: 9.5,
+
+        // Title
+        slide.addText(sec.title, {
+          x: startX + 0.68,
+          y: topY + 0.08,
+          w: colW - 0.8,
+          h: 0.28,
+          fontSize: 10.5,
           bold: true,
           color: darkNavy,
           fontFace: 'Arial',
         });
-        slide.addText(topic.subtitle || 'Registro acadêmico oficial', {
-          x: 5.6,
-          y: topY + 0.22,
-          w: 3.6,
-          h: 0.25,
-          fontSize: 8,
+
+        // Subtitle + range
+        const subText = `${sec.subtitle} · ${sec.slideRangeText}`;
+        slide.addText(subText, {
+          x: startX + 0.68,
+          y: topY + 0.36,
+          w: colW - 0.8,
+          h: 0.28,
+          fontSize: 8.5,
           color: textMuted,
           fontFace: 'Arial',
         });

@@ -335,18 +335,22 @@ export const SlideThumbnails: React.FC<SlideThumbnailsProps> = ({
                         SUMÁRIO ANALÍTICO
                       </div>
                       <div className="text-[7.5px] font-bold text-slate-800 line-clamp-1 leading-tight">
-                        {slide.title || 'Sumário das Atividades'}
+                        {slide.title || 'Sumário'}
                       </div>
                     </div>
-                    <div className="my-auto grid grid-cols-2 gap-1 py-0.5">
-                      {[1, 2, 3, 4].map((n) => (
-                        <div key={n} className="flex items-center gap-1 p-0.5 rounded-[2px] bg-slate-50 border border-slate-200">
-                          <span className="w-2.5 h-2.5 rounded-[1px] bg-[#E0F2FE] text-[#004B8D] font-mono text-[5px] font-bold flex items-center justify-center shrink-0">
-                            0{n}
-                          </span>
-                          <div className="h-[2px] w-8 bg-slate-300 rounded-[1px]" />
-                        </div>
-                      ))}
+                    <div className="my-auto space-y-0.5 py-0.5">
+                      <div className="flex items-center gap-1 p-0.5 rounded-[2px] bg-sky-50 border border-sky-200">
+                        <span className="w-2.5 h-2.5 rounded-[1px] bg-[#E0F2FE] text-[#004B8D] font-mono text-[5px] font-bold flex items-center justify-center shrink-0">
+                          01
+                        </span>
+                        <span className="text-[5.5px] font-bold text-slate-800 truncate">Evidências</span>
+                      </div>
+                      <div className="flex items-center gap-1 p-0.5 rounded-[2px] bg-slate-50 border border-slate-200">
+                        <span className="w-2.5 h-2.5 rounded-[1px] bg-[#E0F2FE] text-[#004B8D] font-mono text-[5px] font-bold flex items-center justify-center shrink-0">
+                          02
+                        </span>
+                        <span className="text-[5.5px] font-medium text-slate-600 truncate">Informações Institucionais</span>
+                      </div>
                     </div>
                     <div className="flex items-center justify-between text-[6px] text-slate-400 border-t border-slate-200 pt-0.5">
                       <span className="truncate max-w-[80px]">{slide.footerLeftText || 'Estácio'}</span>
