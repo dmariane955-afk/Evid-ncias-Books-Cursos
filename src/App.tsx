@@ -35,6 +35,8 @@ const STORAGE_COURSES_KEY = 'estacio_academic_courses_v5';
 const STORAGE_ACTIVITIES_KEY = 'estacio_academic_activities_v5';
 const STORAGE_BOOKS_KEY = 'estacio_academic_books_v5';
 const STORAGE_DELETED_IDS_KEY = 'estacio_academic_deleted_ids_v1';
+const STORAGE_LAST_OPEN_KEY = 'estacio_last_open_course_by_campus_v1';
+const STORAGE_LAST_VIEW_KEY = 'estacio_last_open_view_by_campus_v1';
 
 function getStoredDeletedIds(): Set<string> {
   try {
@@ -155,9 +157,53 @@ export default function App() {
   });
 
   // Current View & Campus separation (Curitiba and FATEC are separated by default)
-  const [currentView, setCurrentView] = useState<'home' | 'editor'>('home');
+  // Track the last open book and last open view per campus
+  const [lastOpenCourseByCampus, setLastOpenCourseByCampus] = useState<Record<CampusId, string | null>>(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_LAST_OPEN_KEY);
+      if (saved) return JSON.parse(saved);
+    } catch (e) {
+      console.warn(e);
+    }
+    return { curitiba: null, fatec: null };
+  });
+
+  const [lastOpenViewByCampus, setLastOpenViewByCampus] = useState<Record<CampusId, 'home' | 'editor'>>(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_LAST_VIEW_KEY);
+      if (saved) return JSON.parse(saved);
+    } catch (e) {
+      console.warn(e);
+    }
+    return { curitiba: 'home', fatec: 'home' };
+  });
+
+  // Current View & Campus separation (Curitiba and FATEC are separated by default)
   const [currentCampus, setCurrentCampus] = useState<CampusId>('curitiba');
+
+  const [currentView, setCurrentView] = useState<'home' | 'editor'>(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_LAST_VIEW_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed.curitiba) return parsed.curitiba;
+      }
+    } catch (e) {
+      console.warn(e);
+    }
+    return 'home';
+  });
+
   const [currentCourseId, setCurrentCourseId] = useState<string>(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_LAST_OPEN_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed.curitiba) return parsed.curitiba;
+      }
+    } catch (e) {
+      console.warn(e);
+    }
     const curitibaCourses = INITIAL_COURSES.filter((c) => c.campus === 'curitiba');
     return curitibaCourses[0]?.id || INITIAL_COURSES[0]?.id || 'course-eng-soft';
   });
@@ -338,11 +384,20 @@ export default function App() {
     }
   }, [courses, activities, books]);
 
+  // Helper to normalize book & course names (case-insensitive, trim, no accents)
+  const normalizeBookName = (s: string) =>
+    (s || '')
+      .trim()
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '');
+
   // 3.1 Bidirectional Reconciliation: Guarantee every evidence slide in books has an active ActivityItem (respecting tombstones)
   useEffect(() => {
     const deletedIds = getStoredDeletedIds();
     setActivities((prevActs) => {
-      const existingIds = new Set(prevActs.map((a) => a.id));
+      const actMap = new Map(prevActs.map((a) => [a.id, a]));
+      let hasChanges = false;
       const additions: ActivityItem[] = [];
 
       books.forEach((b) => {
@@ -352,39 +407,60 @@ export default function App() {
           if (
             slide.type === 'evidencia' &&
             slide.activityId &&
-            !existingIds.has(slide.activityId) &&
             !deletedIds.has(slide.activityId) &&
             !deletedIds.has(slide.id)
           ) {
-            const restoredAct: ActivityItem = {
-              id: slide.activityId,
-              bookId: b.id,
-              campus: b.campus,
-              unitId: b.campus,
-              courseId: b.courseId,
-              title: slide.title || 'Evidência Acadêmica',
-              date: slide.date || slide.evidenceMeta?.date || new Date().toISOString().split('T')[0],
-              time: slide.time || slide.evidenceMeta?.time || '14:00',
-              activityType: (slide.activityType as ActivityType) || 'Atividade regular',
-              objective: slide.objective || slide.evidenceMeta?.actionsReport || 'Registro de atividade prática.',
-              complementaryText: slide.evidenceMeta?.pedagogicalImpact || '',
-              photos: slide.photos || [],
-              targetCourseIds: [b.courseId],
-              primaryCampus: b.campus,
-              syncedCampuses: [b.campus],
-              isShared: false,
-              createdAt: new Date().toISOString(),
-              updatedAt: new Date().toISOString(),
-            };
-            additions.push(restoredAct);
-            existingIds.add(slide.activityId);
-            saveActivityToFirestore(restoredAct);
+            const existingAct = actMap.get(slide.activityId);
+            if (!existingAct) {
+              const restoredAct: ActivityItem = {
+                id: slide.activityId,
+                bookId: b.id,
+                campus: b.campus,
+                unitId: b.campus,
+                courseId: b.courseId,
+                title: slide.title || 'Evidência Acadêmica',
+                date: slide.date || slide.evidenceMeta?.date || new Date().toISOString().split('T')[0],
+                time: slide.time || slide.evidenceMeta?.time || '14:00',
+                activityType: (slide.activityType as ActivityType) || 'Atividade regular',
+                objective: slide.objective || slide.evidenceMeta?.actionsReport || 'Registro de atividade prática.',
+                complementaryText: slide.evidenceMeta?.pedagogicalImpact || '',
+                photos: slide.photos || [],
+                targetCourseIds: [b.courseId],
+                primaryCampus: b.campus,
+                syncedCampuses: [b.campus],
+                isShared: false,
+                createdAt: new Date().toISOString(),
+                updatedAt: new Date().toISOString(),
+              };
+              additions.push(restoredAct);
+              actMap.set(slide.activityId, restoredAct);
+              saveActivityToFirestore(restoredAct);
+              hasChanges = true;
+            } else {
+              // Ensure existing activity contains this book's courseId and campus
+              const needsCourse = !existingAct.targetCourseIds.includes(b.courseId);
+              const needsCampus = !existingAct.syncedCampuses?.includes(b.campus);
+              if (needsCourse || needsCampus) {
+                const updatedCourseIds = Array.from(new Set([...existingAct.targetCourseIds, b.courseId]));
+                const updatedCampuses = Array.from(new Set([...(existingAct.syncedCampuses || []), b.campus])) as CampusId[];
+                const updatedAct: ActivityItem = {
+                  ...existingAct,
+                  targetCourseIds: updatedCourseIds,
+                  syncedCampuses: updatedCampuses,
+                  isShared: updatedCourseIds.length > 1,
+                  updatedAt: new Date().toISOString(),
+                };
+                actMap.set(slide.activityId, updatedAct);
+                saveActivityToFirestore(updatedAct);
+                hasChanges = true;
+              }
+            }
           }
         });
       });
 
-      if (additions.length > 0) {
-        const nextList = [...additions, ...prevActs];
+      if (hasChanges) {
+        const nextList = Array.from(actMap.values());
         try {
           localStorage.setItem(STORAGE_ACTIVITIES_KEY, JSON.stringify(nextList));
         } catch (e) {
@@ -411,12 +487,17 @@ export default function App() {
               }
               return true;
             });
-            setCourses(cleanCourses);
-            try {
-              localStorage.setItem(STORAGE_COURSES_KEY, JSON.stringify(cleanCourses));
-            } catch (e) {
-              console.warn(e);
-            }
+            setCourses((prevCourses) => {
+              const remoteIds = new Set(cleanCourses.map((c) => c.id));
+              const localOnly = prevCourses.filter((c) => !remoteIds.has(c.id) && !deletedIds.has(c.id));
+              const merged = [...cleanCourses, ...localOnly];
+              try {
+                localStorage.setItem(STORAGE_COURSES_KEY, JSON.stringify(merged));
+              } catch (e) {
+                console.warn(e);
+              }
+              return merged;
+            });
           }
         },
         onActivitiesLoaded: (loadedActivities) => {
@@ -429,12 +510,17 @@ export default function App() {
               }
               return true;
             });
-            setActivities(cleanActivities);
-            try {
-              localStorage.setItem(STORAGE_ACTIVITIES_KEY, JSON.stringify(cleanActivities));
-            } catch (e) {
-              console.warn(e);
-            }
+            setActivities((prevActs) => {
+              const remoteIds = new Set(cleanActivities.map((a) => a.id));
+              const localOnly = prevActs.filter((a) => !remoteIds.has(a.id) && !deletedIds.has(a.id));
+              const merged = [...cleanActivities, ...localOnly];
+              try {
+                localStorage.setItem(STORAGE_ACTIVITIES_KEY, JSON.stringify(merged));
+              } catch (e) {
+                console.warn(e);
+              }
+              return merged;
+            });
           }
         },
         onBooksLoaded: (loadedBooks) => {
@@ -468,12 +554,20 @@ export default function App() {
                 };
               });
 
-            setBooks(cleanBooks);
-            try {
-              localStorage.setItem(STORAGE_BOOKS_KEY, JSON.stringify(cleanBooks));
-            } catch (e) {
-              console.warn(e);
-            }
+            setBooks((prevBooks) => {
+              const remoteIds = new Set(cleanBooks.map((b) => b.id));
+              const remoteCourseIds = new Set(cleanBooks.map((b) => b.courseId));
+              const localOnly = prevBooks.filter(
+                (b) => !remoteIds.has(b.id) && !remoteCourseIds.has(b.courseId) && !deletedIds.has(b.id) && !deletedIds.has(b.courseId)
+              );
+              const merged = [...cleanBooks, ...localOnly];
+              try {
+                localStorage.setItem(STORAGE_BOOKS_KEY, JSON.stringify(merged));
+              } catch (e) {
+                console.warn(e);
+              }
+              return merged;
+            });
           }
         },
         onStatusChange: (status, message) => {
@@ -499,15 +593,6 @@ export default function App() {
   const otherCampus: CampusId = currentCampus === 'curitiba' ? 'fatec' : 'curitiba';
   const otherCampusCourses = courses.filter((c) => c.campus === otherCampus);
 
-  // Switch campus safely: pick first available course in that campus
-  const handleSelectCampus = (campus: CampusId) => {
-    setCurrentCampus(campus);
-    const validCourses = courses.filter((c) => c.campus === campus);
-    if (validCourses.length > 0) {
-      setCurrentCourseId(validCourses[0].id);
-    }
-  };
-
   // Get active book and active slide (STRICTLY ISOLATED TO CURRENT CAMPUS FIRST)
   const currentBook =
     books.find((b) => b.courseId === currentCourseId && b.campus === currentCampus) ||
@@ -521,6 +606,131 @@ export default function App() {
       setActiveSlideId(currentBook.slides[0]?.id || '');
     }
   }, [currentBook, activeSlideId]);
+
+  // Switch campus with memory & exact 4-rule matching
+  const handleSelectCampus = useCallback((targetCampus: CampusId) => {
+    if (targetCampus === currentCampus) return;
+
+    // 1. If currently in editor, record the last open book and editor view for the current campus
+    const activeCourseId = currentBook?.courseId || currentCourseId;
+    if (currentView === 'editor' && activeCourseId) {
+      setLastOpenCourseByCampus((prev) => {
+        const up = { ...prev, [currentCampus]: activeCourseId };
+        try { localStorage.setItem(STORAGE_LAST_OPEN_KEY, JSON.stringify(up)); } catch (e) { console.warn(e); }
+        return up;
+      });
+      setLastOpenViewByCampus((prev) => {
+        const up = { ...prev, [currentCampus]: 'editor' as const };
+        try { localStorage.setItem(STORAGE_LAST_VIEW_KEY, JSON.stringify(up)); } catch (e) { console.warn(e); }
+        return up;
+      });
+    }
+
+    const targetCampusCourses = courses.filter((c) => c.campus === targetCampus);
+
+    // Rule 1: If currently in editor with an open book, check if target campus has a book with the SAME NAME
+    if (currentView === 'editor' && currentBook) {
+      const currentNormalizedName = normalizeBookName(currentBook.courseName);
+      
+      const matchingBookInTarget = books.find(
+        (b) => b.campus === targetCampus && normalizeBookName(b.courseName) === currentNormalizedName
+      );
+      const matchingCourseInTarget = targetCampusCourses.find(
+        (c) => normalizeBookName(c.name) === currentNormalizedName
+      );
+      const sameNameCourseId = matchingBookInTarget?.courseId || matchingCourseInTarget?.id;
+
+      if (sameNameCourseId) {
+        // MATCH: Keep editor open on the matching book in target unit
+        setCurrentCampus(targetCampus);
+        setCurrentCourseId(sameNameCourseId);
+        setCurrentView('editor');
+
+        setLastOpenCourseByCampus((prev) => {
+          const up = { ...prev, [targetCampus]: sameNameCourseId };
+          try { localStorage.setItem(STORAGE_LAST_OPEN_KEY, JSON.stringify(up)); } catch (e) { console.warn(e); }
+          return up;
+        });
+        setLastOpenViewByCampus((prev) => {
+          const up = { ...prev, [targetCampus]: 'editor' as const };
+          try { localStorage.setItem(STORAGE_LAST_VIEW_KEY, JSON.stringify(up)); } catch (e) { console.warn(e); }
+          return up;
+        });
+        return;
+      } else {
+        // NO MATCH: User requirement: "caso não tenha o book com mesmo nome cadastrado em ambas unidades, o app deve levr para a pgina inicial da unidade trocada"
+        setCurrentCampus(targetCampus);
+        setCurrentView('home');
+        if (targetCampusCourses.length > 0) {
+          setCurrentCourseId(targetCampusCourses[0].id);
+        }
+        setLastOpenViewByCampus((prev) => {
+          const up = { ...prev, [targetCampus]: 'home' as const };
+          try { localStorage.setItem(STORAGE_LAST_VIEW_KEY, JSON.stringify(up)); } catch (e) { console.warn(e); }
+          return up;
+        });
+        return;
+      }
+    }
+
+    // Rule 2: User is switching to target campus from home:
+    // User requirement: "e ao retornar para a outra unidade o ultimo book aberto deve se manter aberto"
+    const lastTargetCourseId = lastOpenCourseByCampus[targetCampus];
+    const targetHasValidLastBook = lastTargetCourseId && targetCampusCourses.some((c) => c.id === lastTargetCourseId);
+
+    if (targetHasValidLastBook && lastOpenViewByCampus[targetCampus] === 'editor') {
+      // Return to last open book in target campus in editor
+      setCurrentCampus(targetCampus);
+      setCurrentCourseId(lastTargetCourseId!);
+      setCurrentView('editor');
+      return;
+    }
+
+    // Otherwise, stay in home for target campus
+    setCurrentCampus(targetCampus);
+    setCurrentView('home');
+    if (targetCampusCourses.length > 0) {
+      setCurrentCourseId(lastTargetCourseId || targetCampusCourses[0].id);
+    }
+  }, [currentCampus, currentView, currentBook, currentCourseId, courses, books, lastOpenCourseByCampus, lastOpenViewByCampus]);
+
+  // Handle explicit opening of a book: switches view to editor and records memory for current campus
+  const handleOpenBook = useCallback((courseId: string) => {
+    setCurrentCourseId(courseId);
+    setCurrentView('editor');
+    setLastOpenCourseByCampus((prev) => {
+      const up = { ...prev, [currentCampus]: courseId };
+      try {
+        localStorage.setItem(STORAGE_LAST_OPEN_KEY, JSON.stringify(up));
+      } catch (e) {
+        console.warn(e);
+      }
+      return up;
+    });
+    setLastOpenViewByCampus((prev) => {
+      const up = { ...prev, [currentCampus]: 'editor' as const };
+      try {
+        localStorage.setItem(STORAGE_LAST_VIEW_KEY, JSON.stringify(up));
+      } catch (e) {
+        console.warn(e);
+      }
+      return up;
+    });
+  }, [currentCampus]);
+
+  // Handle explicit navigation to Home: records memory for current campus
+  const handleGoHome = useCallback(() => {
+    setCurrentView('home');
+    setLastOpenViewByCampus((prev) => {
+      const up = { ...prev, [currentCampus]: 'home' as const };
+      try {
+        localStorage.setItem(STORAGE_LAST_VIEW_KEY, JSON.stringify(up));
+      } catch (e) {
+        console.warn(e);
+      }
+      return up;
+    });
+  }, [currentCampus]);
 
   // Centralized persistent saver for books with immediate/debounced dispatch and real status tracking
   const persistBookUpdate = useCallback(
@@ -856,6 +1066,8 @@ export default function App() {
         const isTargeted =
           (safeActivity.bookId && b.id === safeActivity.bookId) ||
           targetBookIds.has(b.id) ||
+          targetBookIds.has(b.courseId) ||
+          (safeActivity.targetCourseIds || []).includes(b.courseId) ||
           (safeActivity.courseId === b.courseId && safeActivity.campus === b.campus);
 
         if (!isTargeted) {
@@ -992,6 +1204,19 @@ export default function App() {
           }
           return remaining;
         });
+
+        if (lastOpenCourseByCampus[book.campus] === courseId) {
+          setLastOpenCourseByCampus((prev) => {
+            const up = { ...prev, [book.campus]: null };
+            try { localStorage.setItem(STORAGE_LAST_OPEN_KEY, JSON.stringify(up)); } catch (e) { console.warn(e); }
+            return up;
+          });
+          setLastOpenViewByCampus((prev) => {
+            const up = { ...prev, [book.campus]: 'home' as const };
+            try { localStorage.setItem(STORAGE_LAST_VIEW_KEY, JSON.stringify(up)); } catch (e) { console.warn(e); }
+            return up;
+          });
+        }
       },
     });
   };
@@ -1083,6 +1308,19 @@ export default function App() {
           }
           return remaining;
         });
+
+        if (lastOpenCourseByCampus[course.campus] === courseId) {
+          setLastOpenCourseByCampus((prev) => {
+            const up = { ...prev, [course.campus]: null };
+            try { localStorage.setItem(STORAGE_LAST_OPEN_KEY, JSON.stringify(up)); } catch (e) { console.warn(e); }
+            return up;
+          });
+          setLastOpenViewByCampus((prev) => {
+            const up = { ...prev, [course.campus]: 'home' as const };
+            try { localStorage.setItem(STORAGE_LAST_VIEW_KEY, JSON.stringify(up)); } catch (e) { console.warn(e); }
+            return up;
+          });
+        }
       },
     });
   };
@@ -1261,27 +1499,36 @@ export default function App() {
         pushHistorySnapshot();
 
         // Get all activities of this book
-        const bookActivities = activities.filter((act) => act.targetCourseIds.includes(book.courseId));
+        const bookActivities = activities.filter(
+          (act) => act.targetCourseIds.includes(book.courseId) || act.bookId === book.id
+        );
 
-        // For each activity, link the selected courses
+        // For each activity, link the selected courses and persist to Firestore & localStorage
         const updatedActivities = activities.map((act) => {
-          if (!act.targetCourseIds.includes(book.courseId)) return act;
-          const merged = Array.from(new Set([...act.targetCourseIds, ...selectedIds]));
-          return {
+          if (!act.targetCourseIds.includes(book.courseId) && act.bookId !== book.id) return act;
+          const merged = Array.from(new Set([...act.targetCourseIds, ...selectedIds, book.courseId]));
+          const updatedAct: ActivityItem = {
             ...act,
             targetCourseIds: merged,
             syncedCampuses: ['curitiba', 'fatec'] as CampusId[],
             isShared: true,
             updatedAt: new Date().toISOString(),
           };
+          saveActivityToFirestore(updatedAct);
+          return updatedAct;
         });
 
         setActivities(updatedActivities);
+        try {
+          localStorage.setItem(STORAGE_ACTIVITIES_KEY, JSON.stringify(updatedActivities));
+        } catch (e) {
+          console.warn('LocalStorage error:', e);
+        }
 
-        // Update books to include slides
+        // Update books to include slides and save to Firestore & localStorage
         setBooks((prevBooks) => {
-          return prevBooks.map((b) => {
-            if (!selectedIds.includes(b.courseId)) return b;
+          const updatedBooks = prevBooks.map((b) => {
+            if (!selectedIds.includes(b.courseId) && !selectedIds.includes(b.id)) return b;
             const newSlides = [...b.slides];
             bookActivities.forEach((act) => {
               const alreadyHas = newSlides.some((s) => s.activityId === act.id);
@@ -1309,12 +1556,26 @@ export default function App() {
                     professor: b.coordinator || '',
                     studentsCount: 0,
                     actionsReport: act.objective,
+                    pedagogicalImpact: act.complementaryText || '',
                   },
                 });
               }
             });
-            return { ...b, slides: newSlides.map((s, idx) => ({ ...s, order: idx + 1 })) };
+            const updatedB = {
+              ...b,
+              slides: newSlides.map((s, idx) => ({ ...s, order: idx + 1 })),
+              updatedAt: new Date().toISOString(),
+            };
+            saveBookToFirestore(updatedB);
+            return updatedB;
           });
+
+          try {
+            localStorage.setItem(STORAGE_BOOKS_KEY, JSON.stringify(updatedBooks));
+          } catch (e) {
+            console.warn('LocalStorage error:', e);
+          }
+          return updatedBooks;
         });
       },
     });
@@ -1386,26 +1647,71 @@ export default function App() {
 
     handleUpdateActiveSlide(updatedCurrentSlide);
 
-    // Update all destination books in books state and save to Firestore
+    // Identify target courses and campuses for all selected destination books
+    const targetCoursesToAdd: string[] = [currentBook.courseId];
+    const targetCampusesToAdd: CampusId[] = [currentBook.campus];
+
+    allSelectedIds.forEach((bId) => {
+      const b = books.find((bk) => bk.id === bId || bk.courseId === bId || `book-${bk.courseId}` === bId);
+      if (b) {
+        targetCoursesToAdd.push(b.courseId);
+        targetCampusesToAdd.push(b.campus);
+      }
+    });
+
+    // 1. If this slide is linked to an activity, update the activity so it is linked to all target courses & campuses
+    if (targetSlide.activityId) {
+      setActivities((prevActs) => {
+        const nextActs = prevActs.map((act) => {
+          if (act.id !== targetSlide.activityId) return act;
+          const mergedCourseIds = Array.from(new Set([...act.targetCourseIds, ...targetCoursesToAdd]));
+          const mergedCampuses = Array.from(new Set([...(act.syncedCampuses || []), ...targetCampusesToAdd])) as CampusId[];
+          const updatedAct: ActivityItem = {
+            ...act,
+            targetCourseIds: mergedCourseIds,
+            syncedCampuses: mergedCampuses,
+            isShared: mergedCourseIds.length > 1,
+            updatedAt: new Date().toISOString(),
+          };
+          saveActivityToFirestore(updatedAct);
+          return updatedAct;
+        });
+        try {
+          localStorage.setItem(STORAGE_ACTIVITIES_KEY, JSON.stringify(nextActs));
+        } catch (e) {
+          console.warn('LocalStorage error:', e);
+        }
+        return nextActs;
+      });
+    }
+
+    // 2. Update all destination books in books state, localStorage, and Firestore
     setBooks((prevBooks) => {
       const updatedList = prevBooks.map((b) => {
         if (b.id === currentBook.id) {
-          return {
+          const upCurrent: AcademicBook = {
             ...b,
             slides: b.slides.map((s) => (s.id === slideId ? updatedCurrentSlide : s)),
+            updatedAt: new Date().toISOString(),
           };
+          saveBookToFirestore(upCurrent);
+          return upCurrent;
         }
 
-        const isTargeted = allSelectedIds.includes(b.id);
+        const isTargeted =
+          allSelectedIds.includes(b.id) ||
+          allSelectedIds.includes(b.courseId) ||
+          allSelectedIds.includes(`book-${b.courseId}`);
+
         const existingSlideIndex = b.slides.findIndex(
           (s) => (s.syncGroupId && s.syncGroupId === syncKey) || (s.activityId && s.activityId === syncKey)
         );
 
         if (isTargeted) {
-          // Add or update the slide in this book
+          // Add or update the slide in this destination book
           const destinationSlide: SlideData = {
             ...targetSlide,
-            id: existingSlideIndex !== -1 ? b.slides[existingSlideIndex].id : `slide-sync-${b.id}-${Date.now()}`,
+            id: existingSlideIndex !== -1 ? b.slides[existingSlideIndex].id : `slide-sync-${b.id}-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
             syncGroupId: syncKey,
             syncedBookIds: allSelectedIds,
             isShared: true,
@@ -1444,6 +1750,12 @@ export default function App() {
           return b;
         }
       });
+
+      try {
+        localStorage.setItem(STORAGE_BOOKS_KEY, JSON.stringify(updatedList));
+      } catch (e) {
+        console.warn('LocalStorage error:', e);
+      }
       return updatedList;
     });
 
@@ -1606,6 +1918,25 @@ export default function App() {
     setBooks(updatedBooks);
     setCurrentCampus(campus);
     setCurrentCourseId(courseId);
+    setCurrentView('editor');
+
+    try {
+      localStorage.setItem(STORAGE_COURSES_KEY, JSON.stringify(updatedCourses));
+      localStorage.setItem(STORAGE_BOOKS_KEY, JSON.stringify(updatedBooks));
+    } catch (e) {
+      console.warn('LocalStorage error:', e);
+    }
+
+    setLastOpenCourseByCampus((prev) => {
+      const up = { ...prev, [campus]: courseId };
+      try { localStorage.setItem(STORAGE_LAST_OPEN_KEY, JSON.stringify(up)); } catch (e) { console.warn(e); }
+      return up;
+    });
+    setLastOpenViewByCampus((prev) => {
+      const up = { ...prev, [campus]: 'editor' as const };
+      try { localStorage.setItem(STORAGE_LAST_VIEW_KEY, JSON.stringify(up)); } catch (e) { console.warn(e); }
+      return up;
+    });
 
     saveCourseToFirestore(newCourse);
     saveBookToFirestore(newBook);
@@ -1772,11 +2103,15 @@ export default function App() {
         };
         persistBookUpdate(updatedBook, true);
 
-        // If it was an evidence slide, clean up associated activity if not used by another slide
+        // If it was an evidence slide, clean up associated activity ONLY if not used by ANY other book
         if (targetSlide?.activityId) {
           const actId = targetSlide.activityId;
-          const isStillUsed = updated.some((s) => s.activityId === actId);
-          if (!isStillUsed) {
+          const isStillUsedInCurrentBook = updated.some((s) => s.activityId === actId);
+          const isStillUsedInOtherBooks = books.some(
+            (b) => b.id !== currentBook.id && (b.slides || []).some((s) => s.activityId === actId)
+          );
+
+          if (!isStillUsedInCurrentBook && !isStillUsedInOtherBooks) {
             recordDeletedId(actId);
             setActivities((prev) => {
               const remaining = prev.filter((a) => a.id !== actId);
@@ -1788,6 +2123,28 @@ export default function App() {
               return remaining;
             });
             deleteActivityFromFirestore(actId);
+          } else if (!isStillUsedInCurrentBook && isStillUsedInOtherBooks) {
+            // Activity is still used in other books: unlink current course and save
+            setActivities((prev) => {
+              const updatedActs = prev.map((a) => {
+                if (a.id !== actId) return a;
+                const remainingTargets = (a.targetCourseIds || []).filter((cId) => cId !== currentBook.courseId);
+                const updatedAct = {
+                  ...a,
+                  targetCourseIds: remainingTargets,
+                  isShared: remainingTargets.length > 1,
+                  updatedAt: new Date().toISOString(),
+                };
+                saveActivityToFirestore(updatedAct);
+                return updatedAct;
+              });
+              try {
+                localStorage.setItem(STORAGE_ACTIVITIES_KEY, JSON.stringify(updatedActs));
+              } catch (e) {
+                console.warn(e);
+              }
+              return updatedActs;
+            });
           }
         }
 
@@ -1896,11 +2253,8 @@ export default function App() {
         currentCampus={currentCampus}
         onSelectCampus={handleSelectCampus}
         currentView={currentView}
-        onGoHome={() => setCurrentView('home')}
-        onSelectCourse={(courseId) => {
-          setCurrentCourseId(courseId);
-          setCurrentView('editor');
-        }}
+        onGoHome={handleGoHome}
+        onSelectCourse={handleOpenBook}
         onUpdateBook={handleUpdateBook}
         onOpenNewActivity={() => {
           setEditingActivity(null);
@@ -1932,10 +2286,7 @@ export default function App() {
           activities={activities}
           currentCampus={currentCampus}
           onSelectCampus={handleSelectCampus}
-          onOpenBook={(courseId) => {
-            setCurrentCourseId(courseId);
-            setCurrentView('editor');
-          }}
+          onOpenBook={handleOpenBook}
           onOpenNewActivity={(courseId, isShared) => {
             setEditingActivity(null);
             setActivityModalSharedMode(!!isShared);
