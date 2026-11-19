@@ -211,4 +211,6 @@ export interface AcademicBook {
   updatedAt: string;
   coverImage?: string; // Capa visual personalizada do book coerente com o curso
   slides: SlideData[];
+  slideOrder?: string[]; // Ordered slide IDs for unlimited sub-collection assembly
+  storageVersion?: number; // 2 = slides stored in book_slides + media stored in media collection
 }

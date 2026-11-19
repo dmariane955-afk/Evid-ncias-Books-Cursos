@@ -57,9 +57,43 @@
         "director": { "type": "string" },
         "updatedAt": { "type": "string" },
         "coverImage": { "type": "string" },
-        "slides": { "type": "array" }
+        "slides": { "type": "array" },
+        "slideOrder": { "type": "array" },
+        "storageVersion": { "type": "number" }
       },
-      "required": ["id", "courseId", "campus", "courseName", "period", "title", "slides"]
+      "required": ["id", "courseId", "campus", "courseName", "period", "title"]
+    },
+    "BookSlide": {
+      "title": "BookSlide",
+      "description": "Individual slide belonging to an AcademicBook, stored separately for unlimited book size",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "bookId": { "type": "string" },
+        "type": { "type": "string" },
+        "title": { "type": "string" },
+        "subtitle": { "type": "string" },
+        "order": { "type": "number" },
+        "activityId": { "type": "string" },
+        "syncGroupId": { "type": "string" },
+        "syncedBookIds": { "type": "array" },
+        "isShared": { "type": "boolean" },
+        "photos": { "type": "array" },
+        "customTextBoxes": { "type": "array" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "bookId", "type", "order"]
+    },
+    "MediaAsset": {
+      "title": "MediaAsset",
+      "description": "Content-addressed compressed image asset shared across slides, activities, and courses",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "dataUrl": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "dataUrl"]
     }
   },
   "firestore": {
@@ -73,7 +107,15 @@
     },
     "/books/{bookId}": {
       "schema": "Book",
-      "description": "Collection of academic books and presentations"
+      "description": "Collection of academic books metadata and slide ordering"
+    },
+    "/book_slides/{slideDocId}": {
+      "schema": "BookSlide",
+      "description": "Collection of individual slides per book for unlimited slide capacity"
+    },
+    "/media/{mediaId}": {
+      "schema": "MediaAsset",
+      "description": "Collection of deduplicated compressed image assets"
     }
   }
 }

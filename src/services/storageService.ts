@@ -72,9 +72,12 @@ export async function compressImageToDataUrl(
           // Generate lightweight HD JPEG
           let dataUrl = canvas.toDataURL('image/jpeg', quality);
 
-          // If still over ~65KB (approx 90,000 base64 chars), re-encode at 0.60
-          if (dataUrl.length > 90000) {
+          // If still over ~85KB (approx 115,000 base64 chars), step down quality safely
+          if (dataUrl.length > 115000) {
             dataUrl = canvas.toDataURL('image/jpeg', 0.6);
+          }
+          if (dataUrl.length > 250000) {
+            dataUrl = canvas.toDataURL('image/jpeg', 0.45);
           }
 
           resolve(dataUrl);

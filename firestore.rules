@@ -11,6 +11,12 @@ service cloud.firestore {
     match /books/{bookId} {
       allow read, write: if true;
     }
+    match /book_slides/{slideDocId} {
+      allow read, write: if true;
+    }
+    match /media/{mediaId} {
+      allow read, write: if true;
+    }
     match /test/{docId} {
       allow read, write: if true;
     }

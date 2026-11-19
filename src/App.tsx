@@ -27,8 +27,17 @@ import {
   deleteBookFromFirestore, 
   deleteCourseFromFirestore, 
   deleteActivityFromFirestore,
+  isBookSaveInFlight,
   SyncStatus 
 } from './services/firestoreSync';
+import {
+  hydrateActivity,
+  hydrateBook,
+  hydrateCourse,
+  loadAllMediaFromIDB,
+  loadCollectionFromIDB,
+  persistLocalCollection,
+} from './services/mediaCache';
 import { Share2 } from 'lucide-react';
 
 const STORAGE_COURSES_KEY = 'estacio_academic_courses_v5';
@@ -373,16 +382,78 @@ export default function App() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [handleUndo, handleRedo]);
 
-  // 3. Persist to localStorage (Local fallback cache)
+  // 3. Persist locally using unlimited IndexedDB + compact localStorage dehydration (never hits 5MB quota)
   useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_COURSES_KEY, JSON.stringify(courses));
-      localStorage.setItem(STORAGE_ACTIVITIES_KEY, JSON.stringify(activities));
-      localStorage.setItem(STORAGE_BOOKS_KEY, JSON.stringify(books));
-    } catch (e) {
-      console.warn('LocalStorage error:', e);
-    }
+    persistLocalCollection(STORAGE_COURSES_KEY, 'courses', courses);
+    persistLocalCollection(STORAGE_ACTIVITIES_KEY, 'activities', activities);
+    persistLocalCollection(STORAGE_BOOKS_KEY, 'books', books);
   }, [courses, activities, books]);
+
+  // 3.0 Hydrate any media:// references and recover full IndexedDB datasets on mount
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const idbMedia = await loadAllMediaFromIDB();
+      if (cancelled) return;
+
+      const [idbCourses, idbActivities, idbBooks] = await Promise.all([
+        loadCollectionFromIDB<Course[]>(STORAGE_COURSES_KEY),
+        loadCollectionFromIDB<ActivityItem[]>(STORAGE_ACTIVITIES_KEY),
+        loadCollectionFromIDB<AcademicBook[]>(STORAGE_BOOKS_KEY),
+      ]);
+      if (cancelled) return;
+
+      const deletedIds = getStoredDeletedIds();
+
+      if (idbCourses && idbCourses.length > 0) {
+        setCourses((prev) => {
+          const map = new Map(prev.map((c) => [c.id, hydrateCourse(c, idbMedia)]));
+          idbCourses.forEach((c) => {
+            if (!deletedIds.has(c.id) && !map.has(c.id)) {
+              map.set(c.id, hydrateCourse(c, idbMedia));
+            }
+          });
+          return Array.from(map.values());
+        });
+      } else if (idbMedia.size > 0) {
+        setCourses((prev) => prev.map((c) => hydrateCourse(c, idbMedia)));
+      }
+
+      if (idbActivities && idbActivities.length > 0) {
+        setActivities((prev) => {
+          const map = new Map(prev.map((a) => [a.id, hydrateActivity(a, idbMedia)]));
+          idbActivities.forEach((a) => {
+            if (!deletedIds.has(a.id) && !map.has(a.id)) {
+              map.set(a.id, hydrateActivity(a, idbMedia));
+            }
+          });
+          return Array.from(map.values());
+        });
+      } else if (idbMedia.size > 0) {
+        setActivities((prev) => prev.map((a) => hydrateActivity(a, idbMedia)));
+      }
+
+      if (idbBooks && idbBooks.length > 0) {
+        setBooks((prev) => {
+          const map = new Map(prev.map((b) => [b.id, hydrateBook(b, idbMedia)]));
+          idbBooks.forEach((b) => {
+            if (deletedIds.has(b.id) || deletedIds.has(b.courseId) || deletedIds.has(`book-${b.courseId}`)) return;
+            const existing = map.get(b.id);
+            const hydratedIdb = hydrateBook(b, idbMedia);
+            if (!existing || (hydratedIdb.slides?.length || 0) > (existing.slides?.length || 0)) {
+              map.set(b.id, hydratedIdb);
+            }
+          });
+          return Array.from(map.values());
+        });
+      } else if (idbMedia.size > 0) {
+        setBooks((prev) => prev.map((b) => hydrateBook(b, idbMedia)));
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // Helper to normalize book & course names (case-insensitive, trim, no accents)
   const normalizeBookName = (s: string) =>
@@ -392,13 +463,14 @@ export default function App() {
       .normalize('NFD')
       .replace(/[\u0300-\u036f]/g, '');
 
-  // 3.1 Bidirectional Reconciliation: Guarantee every evidence slide in books has an active ActivityItem (respecting tombstones)
+  // 3.1 Bidirectional Reconciliation:
+  // - Backward: Guarantee every evidence slide in books has an active ActivityItem
+  // - Forward: Guarantee every active ActivityItem has its evidence slide in its linked books (recovers slides 12+ previously dropped by 1MB limit!)
   useEffect(() => {
     const deletedIds = getStoredDeletedIds();
     setActivities((prevActs) => {
       const actMap = new Map(prevActs.map((a) => [a.id, a]));
       let hasChanges = false;
-      const additions: ActivityItem[] = [];
 
       books.forEach((b) => {
         if (deletedIds.has(b.id) || deletedIds.has(b.courseId) || deletedIds.has(`book-${b.courseId}`)) return;
@@ -408,7 +480,8 @@ export default function App() {
             slide.type === 'evidencia' &&
             slide.activityId &&
             !deletedIds.has(slide.activityId) &&
-            !deletedIds.has(slide.id)
+            !deletedIds.has(slide.id) &&
+            !deletedIds.has(`${b.id}::${slide.activityId}`)
           ) {
             const existingAct = actMap.get(slide.activityId);
             if (!existingAct) {
@@ -432,7 +505,6 @@ export default function App() {
                 createdAt: new Date().toISOString(),
                 updatedAt: new Date().toISOString(),
               };
-              additions.push(restoredAct);
               actMap.set(slide.activityId, restoredAct);
               saveActivityToFirestore(restoredAct);
               hasChanges = true;
@@ -461,16 +533,93 @@ export default function App() {
 
       if (hasChanges) {
         const nextList = Array.from(actMap.values());
-        try {
-          localStorage.setItem(STORAGE_ACTIVITIES_KEY, JSON.stringify(nextList));
-        } catch (e) {
-          console.warn(e);
-        }
+        persistLocalCollection(STORAGE_ACTIVITIES_KEY, 'activities', nextList);
         return nextList;
       }
       return prevActs;
     });
   }, [books]);
+
+  useEffect(() => {
+    if (activities.length === 0 || books.length === 0) return;
+    const deletedIds = getStoredDeletedIds();
+
+    setBooks((prevBooks) => {
+      let hasBookChanges = false;
+      const updatedBooks = prevBooks.map((b) => {
+        if (deletedIds.has(b.id) || deletedIds.has(b.courseId) || deletedIds.has(`book-${b.courseId}`)) {
+          return b;
+        }
+
+        const missingActivities = activities.filter((act) => {
+          if (deletedIds.has(act.id) || deletedIds.has(`${b.id}::${act.id}`)) return false;
+          const candidateSlideId1 = `slide-act-${b.id}-${act.id}`;
+          const candidateSlideId2 = `slide-act-${act.id}-${b.courseId}`;
+          if (deletedIds.has(candidateSlideId1) || deletedIds.has(candidateSlideId2)) return false;
+
+          const isLinked =
+            (act.targetCourseIds || []).includes(b.courseId) ||
+            act.bookId === b.id ||
+            (act.syncedBookIds || []).includes(b.id);
+          if (!isLinked) return false;
+
+          return !(b.slides || []).some((s) => s.activityId === act.id);
+        });
+
+        if (missingActivities.length === 0) return b;
+
+        hasBookChanges = true;
+        const newSlides = [...(b.slides || [])];
+        missingActivities.forEach((act) => {
+          const recoveredSlide: SlideData = {
+            id: `slide-act-${b.id}-${act.id}`,
+            activityId: act.id,
+            type: 'evidencia',
+            title: act.title,
+            subtitle: `${act.activityType} · ${act.date}${act.time ? ` às ${act.time}` : ''}`,
+            activityType: act.activityType,
+            date: act.date,
+            time: act.time,
+            objective: act.objective,
+            order: newSlides.length + 1,
+            photoLayout: (act.photos || []).length > 1 ? 'split-50-50' : 'single',
+            photos: [...(act.photos || [])],
+            evidenceMeta: {
+              category: act.activityType,
+              date: act.date,
+              time: act.time,
+              location: 'Campus Universitário',
+              discipline: '',
+              professor: b.coordinator || '',
+              studentsCount: 0,
+              actionsReport: act.objective,
+              pedagogicalImpact: act.complementaryText || '',
+            },
+            customTextBoxes: [],
+          };
+
+          const contatosIdx = newSlides.findIndex((s) => s.type === 'contatos');
+          const insertIdx = contatosIdx >= 1 ? contatosIdx : newSlides.length;
+          newSlides.splice(insertIdx, 0, recoveredSlide);
+        });
+
+        const reordered = newSlides.map((s, idx) => ({ ...s, order: idx + 1 }));
+        const updatedB: AcademicBook = {
+          ...b,
+          slides: reordered,
+          updatedAt: new Date().toISOString(),
+        };
+        saveBookToFirestore(updatedB);
+        return updatedB;
+      });
+
+      if (hasBookChanges) {
+        persistLocalCollection(STORAGE_BOOKS_KEY, 'books', updatedBooks);
+        return updatedBooks;
+      }
+      return prevBooks;
+    });
+  }, [activities, books]);
 
   // 4. Real-time Cloud Database Synchronization (Firestore)
   // Non-destructive smart sync strictly respecting deleted tombstones
@@ -491,11 +640,7 @@ export default function App() {
               const remoteIds = new Set(cleanCourses.map((c) => c.id));
               const localOnly = prevCourses.filter((c) => !remoteIds.has(c.id) && !deletedIds.has(c.id));
               const merged = [...cleanCourses, ...localOnly];
-              try {
-                localStorage.setItem(STORAGE_COURSES_KEY, JSON.stringify(merged));
-              } catch (e) {
-                console.warn(e);
-              }
+              persistLocalCollection(STORAGE_COURSES_KEY, 'courses', merged);
               return merged;
             });
           }
@@ -514,11 +659,7 @@ export default function App() {
               const remoteIds = new Set(cleanActivities.map((a) => a.id));
               const localOnly = prevActs.filter((a) => !remoteIds.has(a.id) && !deletedIds.has(a.id));
               const merged = [...cleanActivities, ...localOnly];
-              try {
-                localStorage.setItem(STORAGE_ACTIVITIES_KEY, JSON.stringify(merged));
-              } catch (e) {
-                console.warn(e);
-              }
+              persistLocalCollection(STORAGE_ACTIVITIES_KEY, 'activities', merged);
               return merged;
             });
           }
@@ -536,14 +677,18 @@ export default function App() {
                 return true;
               })
               .map((b) => {
-                const cleanSlides = (b.slides || []).filter(
-                  (s) => !deletedIds.has(s.id) && (!s.activityId || !deletedIds.has(s.activityId))
-                ).map((s) => {
-                  if (s.type === 'sumario' && s.title === 'Sumário das Atividades') {
-                    return { ...s, title: 'Sumário' };
-                  }
-                  return s;
-                });
+                const cleanSlides = (b.slides || [])
+                  .filter(
+                    (s) =>
+                      !deletedIds.has(s.id) &&
+                      (!s.activityId || (!deletedIds.has(s.activityId) && !deletedIds.has(`${b.id}::${s.activityId}`)))
+                  )
+                  .map((s) => {
+                    if (s.type === 'sumario' && s.title === 'Sumário das Atividades') {
+                      return { ...s, title: 'Sumário' };
+                    }
+                    return s;
+                  });
                 const capaSlide = cleanSlides.find((s) => s.type === 'capa');
                 const capaPhotoUrl = capaSlide?.photos?.[0]?.url;
                 const effectiveCover = b.coverImage || capaPhotoUrl;
@@ -555,17 +700,23 @@ export default function App() {
               });
 
             setBooks((prevBooks) => {
-              const remoteIds = new Set(cleanBooks.map((b) => b.id));
-              const remoteCourseIds = new Set(cleanBooks.map((b) => b.courseId));
+              const prevById = new Map(prevBooks.map((pb) => [pb.id, pb]));
+              const reconciledRemote = cleanBooks.map((rb) => {
+                const prevB = prevById.get(rb.id);
+                if (prevB && isBookSaveInFlight(rb.id)) {
+                  // Protect active local save against intermediate stale remote snapshots
+                  return prevB;
+                }
+                return rb;
+              });
+
+              const remoteIds = new Set(reconciledRemote.map((b) => b.id));
+              const remoteCourseIds = new Set(reconciledRemote.map((b) => b.courseId));
               const localOnly = prevBooks.filter(
                 (b) => !remoteIds.has(b.id) && !remoteCourseIds.has(b.courseId) && !deletedIds.has(b.id) && !deletedIds.has(b.courseId)
               );
-              const merged = [...cleanBooks, ...localOnly];
-              try {
-                localStorage.setItem(STORAGE_BOOKS_KEY, JSON.stringify(merged));
-              } catch (e) {
-                console.warn(e);
-              }
+              const merged = [...reconciledRemote, ...localOnly];
+              persistLocalCollection(STORAGE_BOOKS_KEY, 'books', merged);
               return merged;
             });
           }
@@ -743,19 +894,14 @@ export default function App() {
         immediate,
       });
 
-      // 1. Update React state immediately
-      setBooks((prev) => prev.map((b) => (b.id === updatedBook.id ? updatedBook : b)));
+      // 1. Update React state & safe local cache immediately
+      setBooks((prev) => {
+        const nextList = prev.map((b) => (b.id === updatedBook.id ? updatedBook : b));
+        persistLocalCollection(STORAGE_BOOKS_KEY, 'books', nextList);
+        return nextList;
+      });
 
-      // 2. Persist to localStorage immediately (offline cache fallback)
-      try {
-        const stored = JSON.parse(localStorage.getItem(STORAGE_BOOKS_KEY) || '[]');
-        const updatedList = stored.map((b: AcademicBook) => (b.id === updatedBook.id ? updatedBook : b));
-        localStorage.setItem(STORAGE_BOOKS_KEY, JSON.stringify(updatedList));
-      } catch (e) {
-        console.warn('LocalStorage error:', e);
-      }
-
-      // 3. Clear any pending debounce timeout
+      // 2. Clear any pending debounce timeout
       if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
 
       setSyncStatus('syncing');
@@ -794,13 +940,9 @@ export default function App() {
   // Guarantee flush on page refresh / window close
   useEffect(() => {
     const handleBeforeUnload = () => {
-      try {
-        localStorage.setItem(STORAGE_COURSES_KEY, JSON.stringify(courses));
-        localStorage.setItem(STORAGE_ACTIVITIES_KEY, JSON.stringify(activities));
-        localStorage.setItem(STORAGE_BOOKS_KEY, JSON.stringify(books));
-      } catch (e) {
-        console.warn('LocalStorage flush error on beforeunload:', e);
-      }
+      persistLocalCollection(STORAGE_COURSES_KEY, 'courses', courses);
+      persistLocalCollection(STORAGE_ACTIVITIES_KEY, 'activities', activities);
+      persistLocalCollection(STORAGE_BOOKS_KEY, 'books', books);
       if (currentBook) {
         saveBookToFirestore(currentBook);
       }
@@ -1000,11 +1142,7 @@ export default function App() {
           saveActivityToFirestore(updatedAct);
           return updatedAct;
         });
-        try {
-          localStorage.setItem(STORAGE_ACTIVITIES_KEY, JSON.stringify(nextActs));
-        } catch (e) {
-          console.warn('LocalStorage error:', e);
-        }
+        persistLocalCollection(STORAGE_ACTIVITIES_KEY, 'activities', nextActs);
         return nextActs;
       });
     }
@@ -1043,11 +1181,7 @@ export default function App() {
       updatedActivities = [safeActivity, ...activities];
     }
     setActivities(updatedActivities);
-    try {
-      localStorage.setItem(STORAGE_ACTIVITIES_KEY, JSON.stringify(updatedActivities));
-    } catch (e) {
-      console.warn('LocalStorage error:', e);
-    }
+    persistLocalCollection(STORAGE_ACTIVITIES_KEY, 'activities', updatedActivities);
     saveActivityToFirestore(safeActivity);
 
     // Identify target books explicitly:
@@ -1107,7 +1241,8 @@ export default function App() {
         if (existingSlideIndex !== -1) {
           newSlides[existingSlideIndex] = updatedSlide;
         } else {
-          const insertIndex = Math.max(1, newSlides.length - 1);
+          const contatosIdx = newSlides.findIndex((s) => s.type === 'contatos');
+          const insertIndex = contatosIdx >= 1 ? contatosIdx : newSlides.length;
           newSlides.splice(insertIndex, 0, updatedSlide);
           newSlides = newSlides.map((s, idx) => ({ ...s, order: idx + 1 }));
         }
@@ -1117,11 +1252,7 @@ export default function App() {
         return updatedB;
       });
 
-      try {
-        localStorage.setItem(STORAGE_BOOKS_KEY, JSON.stringify(updatedBooks));
-      } catch (e) {
-        console.warn('LocalStorage error:', e);
-      }
+      persistLocalCollection(STORAGE_BOOKS_KEY, 'books', updatedBooks);
       return updatedBooks;
     });
 
@@ -1147,25 +1278,17 @@ export default function App() {
         recordDeletedId(`book-${courseId}`);
         recordDeletedId(courseId);
 
-        // 2. Remove book from books state & localStorage
+        // 2. Remove book from books state & local cache
         setBooks((prevBooks) => {
           const remaining = prevBooks.filter((b) => b.id !== bookId && b.courseId !== courseId);
-          try {
-            localStorage.setItem(STORAGE_BOOKS_KEY, JSON.stringify(remaining));
-          } catch (e) {
-            console.warn(e);
-          }
+          persistLocalCollection(STORAGE_BOOKS_KEY, 'books', remaining);
           return remaining;
         });
 
-        // 3. Remove course from courses state & localStorage
+        // 3. Remove course from courses state & local cache
         setCourses((prevCourses) => {
           const remaining = prevCourses.filter((c) => c.id !== courseId);
-          try {
-            localStorage.setItem(STORAGE_COURSES_KEY, JSON.stringify(remaining));
-          } catch (e) {
-            console.warn(e);
-          }
+          persistLocalCollection(STORAGE_COURSES_KEY, 'courses', remaining);
           return remaining;
         });
 
@@ -1183,11 +1306,7 @@ export default function App() {
             }))
             .filter((act) => act.targetCourseIds.length > 0);
 
-          try {
-            localStorage.setItem(STORAGE_ACTIVITIES_KEY, JSON.stringify(updated));
-          } catch (e) {
-            console.warn(e);
-          }
+          persistLocalCollection(STORAGE_ACTIVITIES_KEY, 'activities', updated);
           return updated;
         });
 
@@ -1240,11 +1359,7 @@ export default function App() {
         // 2. Remove course locally and in Firestore
         setCourses((prevCourses) => {
           const remaining = prevCourses.filter((c) => c.id !== courseId);
-          try {
-            localStorage.setItem(STORAGE_COURSES_KEY, JSON.stringify(remaining));
-          } catch (e) {
-            console.warn(e);
-          }
+          persistLocalCollection(STORAGE_COURSES_KEY, 'courses', remaining);
           return remaining;
         });
         deleteCourseFromFirestore(courseId);
@@ -1259,11 +1374,7 @@ export default function App() {
           deleteBookFromFirestore(`book-${courseId}`);
 
           const remaining = prevBooks.filter((b) => b.courseId !== courseId && b.id !== `book-${courseId}`);
-          try {
-            localStorage.setItem(STORAGE_BOOKS_KEY, JSON.stringify(remaining));
-          } catch (e) {
-            console.warn(e);
-          }
+          persistLocalCollection(STORAGE_BOOKS_KEY, 'books', remaining);
           return remaining;
         });
 
@@ -1287,11 +1398,7 @@ export default function App() {
             })
             .filter((act) => act.targetCourseIds.length > 0);
 
-          try {
-            localStorage.setItem(STORAGE_ACTIVITIES_KEY, JSON.stringify(updated));
-          } catch (e) {
-            console.warn(e);
-          }
+          persistLocalCollection(STORAGE_ACTIVITIES_KEY, 'activities', updated);
           return updated;
         });
 
@@ -1338,26 +1445,23 @@ export default function App() {
       pushHistorySnapshot();
       recordDeletedId(activity.id);
 
-      // 1. Delete from activities state & localStorage
+      // 1. Delete from activities state & local cache
       setActivities((prev) => {
         const remaining = prev.filter((a) => a.id !== activity.id);
-        try {
-          localStorage.setItem(STORAGE_ACTIVITIES_KEY, JSON.stringify(remaining));
-        } catch (e) {
-          console.warn(e);
-        }
+        persistLocalCollection(STORAGE_ACTIVITIES_KEY, 'activities', remaining);
         return remaining;
       });
 
       // 2. Delete from Firestore
       deleteActivityFromFirestore(activity.id);
 
-      // 3. Remove slide from all books, update state, localStorage, and Firestore
+      // 3. Remove slide from all books, update state, local cache, and Firestore
       setBooks((prevBooks) => {
         const updatedBooks = prevBooks.map((b) => {
           const hasSlide = (b.slides || []).some((s) => s.activityId === activity.id);
           if (!hasSlide) return b;
 
+          recordDeletedId(`${b.id}::${activity.id}`);
           const newSlides = b.slides
             .filter((s) => s.activityId !== activity.id)
             .map((s, idx) => ({ ...s, order: idx + 1 }));
@@ -1367,11 +1471,7 @@ export default function App() {
           return updatedB;
         });
 
-        try {
-          localStorage.setItem(STORAGE_BOOKS_KEY, JSON.stringify(updatedBooks));
-        } catch (e) {
-          console.warn(e);
-        }
+        persistLocalCollection(STORAGE_BOOKS_KEY, 'books', updatedBooks);
         return updatedBooks;
       });
     };
@@ -1395,8 +1495,12 @@ export default function App() {
               return;
             }
 
+            const firstRemainingCourseId = remainingTargetIds[0] || '';
             const updatedAct: ActivityItem = {
               ...activity,
+              courseId: remainingTargetIds.includes(activity.courseId) ? activity.courseId : firstRemainingCourseId,
+              bookId: remainingTargetIds.includes(activity.courseId) ? activity.bookId : (firstRemainingCourseId ? `book-${firstRemainingCourseId}` : ''),
+              campus: otherCampus,
               targetCourseIds: remainingTargetIds,
               syncedCampuses: [otherCampus],
               isShared: remainingTargetIds.length > 1,
@@ -1405,11 +1509,7 @@ export default function App() {
 
             setActivities((prev) => {
               const updated = prev.map((act) => (act.id === activity.id ? updatedAct : act));
-              try {
-                localStorage.setItem(STORAGE_ACTIVITIES_KEY, JSON.stringify(updated));
-              } catch (e) {
-                console.warn(e);
-              }
+              persistLocalCollection(STORAGE_ACTIVITIES_KEY, 'activities', updated);
               return updated;
             });
             saveActivityToFirestore(updatedAct);
@@ -1418,6 +1518,7 @@ export default function App() {
             setBooks((prevBooks) => {
               const updatedBooks = prevBooks.map((b) => {
                 if (b.campus !== currentCampus) return b;
+                recordDeletedId(`${b.id}::${activity.id}`);
                 const newSlides = b.slides
                   .filter((s) => s.activityId !== activity.id)
                   .map((s, idx) => ({ ...s, order: idx + 1 }));
@@ -1426,11 +1527,7 @@ export default function App() {
                 return updatedB;
               });
 
-              try {
-                localStorage.setItem(STORAGE_BOOKS_KEY, JSON.stringify(updatedBooks));
-              } catch (e) {
-                console.warn(e);
-              }
+              persistLocalCollection(STORAGE_BOOKS_KEY, 'books', updatedBooks);
               return updatedBooks;
             });
           } else {
@@ -1519,13 +1616,9 @@ export default function App() {
         });
 
         setActivities(updatedActivities);
-        try {
-          localStorage.setItem(STORAGE_ACTIVITIES_KEY, JSON.stringify(updatedActivities));
-        } catch (e) {
-          console.warn('LocalStorage error:', e);
-        }
+        persistLocalCollection(STORAGE_ACTIVITIES_KEY, 'activities', updatedActivities);
 
-        // Update books to include slides and save to Firestore & localStorage
+        // Update books to include slides and save to Firestore & local cache
         setBooks((prevBooks) => {
           const updatedBooks = prevBooks.map((b) => {
             if (!selectedIds.includes(b.courseId) && !selectedIds.includes(b.id)) return b;
@@ -1533,7 +1626,8 @@ export default function App() {
             bookActivities.forEach((act) => {
               const alreadyHas = newSlides.some((s) => s.activityId === act.id);
               if (!alreadyHas) {
-                const insertIdx = Math.max(1, newSlides.length - 1);
+                const contatosIdx = newSlides.findIndex((s) => s.type === 'contatos');
+                const insertIdx = contatosIdx >= 1 ? contatosIdx : newSlides.length;
                 newSlides.splice(insertIdx, 0, {
                   id: `slide-act-${act.id}-${b.courseId}`,
                   activityId: act.id,
@@ -1570,11 +1664,7 @@ export default function App() {
             return updatedB;
           });
 
-          try {
-            localStorage.setItem(STORAGE_BOOKS_KEY, JSON.stringify(updatedBooks));
-          } catch (e) {
-            console.warn('LocalStorage error:', e);
-          }
+          persistLocalCollection(STORAGE_BOOKS_KEY, 'books', updatedBooks);
           return updatedBooks;
         });
       },
@@ -1676,16 +1766,12 @@ export default function App() {
           saveActivityToFirestore(updatedAct);
           return updatedAct;
         });
-        try {
-          localStorage.setItem(STORAGE_ACTIVITIES_KEY, JSON.stringify(nextActs));
-        } catch (e) {
-          console.warn('LocalStorage error:', e);
-        }
+        persistLocalCollection(STORAGE_ACTIVITIES_KEY, 'activities', nextActs);
         return nextActs;
       });
     }
 
-    // 2. Update all destination books in books state, localStorage, and Firestore
+    // 2. Update all destination books in books state, local cache, and Firestore
     setBooks((prevBooks) => {
       const updatedList = prevBooks.map((b) => {
         if (b.id === currentBook.id) {
@@ -1722,7 +1808,8 @@ export default function App() {
           if (existingSlideIndex !== -1) {
             newSlides[existingSlideIndex] = destinationSlide;
           } else {
-            const insertIdx = Math.max(1, newSlides.length - 1);
+            const contatosIdx = newSlides.findIndex((s) => s.type === 'contatos');
+            const insertIdx = contatosIdx >= 1 ? contatosIdx : newSlides.length;
             newSlides.splice(insertIdx, 0, destinationSlide);
             newSlides = newSlides.map((s, idx) => ({ ...s, order: idx + 1 }));
           }
@@ -1751,11 +1838,7 @@ export default function App() {
         }
       });
 
-      try {
-        localStorage.setItem(STORAGE_BOOKS_KEY, JSON.stringify(updatedList));
-      } catch (e) {
-        console.warn('LocalStorage error:', e);
-      }
+      persistLocalCollection(STORAGE_BOOKS_KEY, 'books', updatedList);
       return updatedList;
     });
 
@@ -1920,12 +2003,8 @@ export default function App() {
     setCurrentCourseId(courseId);
     setCurrentView('editor');
 
-    try {
-      localStorage.setItem(STORAGE_COURSES_KEY, JSON.stringify(updatedCourses));
-      localStorage.setItem(STORAGE_BOOKS_KEY, JSON.stringify(updatedBooks));
-    } catch (e) {
-      console.warn('LocalStorage error:', e);
-    }
+    persistLocalCollection(STORAGE_COURSES_KEY, 'courses', updatedCourses);
+    persistLocalCollection(STORAGE_BOOKS_KEY, 'books', updatedBooks);
 
     setLastOpenCourseByCampus((prev) => {
       const up = { ...prev, [campus]: courseId };
@@ -1950,11 +2029,7 @@ export default function App() {
       const targetC = updated.find((c) => c.id === courseId);
       if (targetC) {
         saveCourseToFirestore(targetC);
-        try {
-          localStorage.setItem(STORAGE_COURSES_KEY, JSON.stringify(updated));
-        } catch (e) {
-          console.warn(e);
-        }
+        persistLocalCollection(STORAGE_COURSES_KEY, 'courses', updated);
       }
       return updated;
     });
@@ -2016,11 +2091,7 @@ export default function App() {
         return b;
       });
 
-      try {
-        localStorage.setItem(STORAGE_BOOKS_KEY, JSON.stringify(updated));
-      } catch (e) {
-        console.warn(e);
-      }
+      persistLocalCollection(STORAGE_BOOKS_KEY, 'books', updated);
 
       return updated;
     });
@@ -2091,6 +2162,9 @@ export default function App() {
       onConfirm: () => {
         pushHistorySnapshot();
         recordDeletedId(slideId);
+        if (targetSlide?.activityId) {
+          recordDeletedId(`${currentBook.id}::${targetSlide.activityId}`);
+        }
 
         const updated = currentBook.slides
           .filter((s) => s.id !== slideId)
@@ -2107,30 +2181,33 @@ export default function App() {
         if (targetSlide?.activityId) {
           const actId = targetSlide.activityId;
           const isStillUsedInCurrentBook = updated.some((s) => s.activityId === actId);
-          const isStillUsedInOtherBooks = books.some(
+          const otherBooksWithAct = books.filter(
             (b) => b.id !== currentBook.id && (b.slides || []).some((s) => s.activityId === actId)
           );
+          const isStillUsedInOtherBooks = otherBooksWithAct.length > 0;
 
           if (!isStillUsedInCurrentBook && !isStillUsedInOtherBooks) {
             recordDeletedId(actId);
             setActivities((prev) => {
               const remaining = prev.filter((a) => a.id !== actId);
-              try {
-                localStorage.setItem(STORAGE_ACTIVITIES_KEY, JSON.stringify(remaining));
-              } catch (e) {
-                console.warn(e);
-              }
+              persistLocalCollection(STORAGE_ACTIVITIES_KEY, 'activities', remaining);
               return remaining;
             });
             deleteActivityFromFirestore(actId);
           } else if (!isStillUsedInCurrentBook && isStillUsedInOtherBooks) {
-            // Activity is still used in other books: unlink current course and save
+            // Activity is still used in other books: unlink current course/book and save
+            const fallbackBook = otherBooksWithAct[0];
             setActivities((prev) => {
               const updatedActs = prev.map((a) => {
                 if (a.id !== actId) return a;
                 const remainingTargets = (a.targetCourseIds || []).filter((cId) => cId !== currentBook.courseId);
-                const updatedAct = {
+                const remainingCampuses = Array.from(new Set(otherBooksWithAct.map((b) => b.campus))) as CampusId[];
+                const updatedAct: ActivityItem = {
                   ...a,
+                  bookId: a.bookId === currentBook.id ? (fallbackBook?.id || '') : a.bookId,
+                  courseId: a.courseId === currentBook.courseId ? (fallbackBook?.courseId || remainingTargets[0] || '') : a.courseId,
+                  campus: fallbackBook?.campus || a.campus,
+                  syncedCampuses: remainingCampuses,
                   targetCourseIds: remainingTargets,
                   isShared: remainingTargets.length > 1,
                   updatedAt: new Date().toISOString(),
@@ -2138,11 +2215,7 @@ export default function App() {
                 saveActivityToFirestore(updatedAct);
                 return updatedAct;
               });
-              try {
-                localStorage.setItem(STORAGE_ACTIVITIES_KEY, JSON.stringify(updatedActs));
-              } catch (e) {
-                console.warn(e);
-              }
+              persistLocalCollection(STORAGE_ACTIVITIES_KEY, 'activities', updatedActs);
               return updatedActs;
             });
           }
@@ -2213,11 +2286,7 @@ export default function App() {
 
       setActivities((prev) => {
         const nextActs = [newActivity, ...prev];
-        try {
-          localStorage.setItem(STORAGE_ACTIVITIES_KEY, JSON.stringify(nextActs));
-        } catch (e) {
-          console.warn('LocalStorage error:', e);
-        }
+        persistLocalCollection(STORAGE_ACTIVITIES_KEY, 'activities', nextActs);
         return nextActs;
       });
       saveActivityToFirestore(newActivity);
