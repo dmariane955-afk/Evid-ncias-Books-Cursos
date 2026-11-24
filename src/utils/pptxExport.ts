@@ -5,6 +5,7 @@ import { CAMPUS_CONFIGS, AREA_CONFIGS } from '../data/defaults';
 import { getCourseCoverImage } from './courseCovers';
 import { computePhotoLayout } from './photoLayoutEngine';
 import { getSummarySections } from './summaryStructure';
+import { resolveSafeDisplayUrl } from '../services/mediaCache';
 import estacioLogoOfficial from '../assets/images/estacio_logo_oficial.png';
 
 function cleanColorHex(colorStr?: string, defaultColor: string = '000000'): string {
@@ -16,11 +17,12 @@ function cleanColorHex(colorStr?: string, defaultColor: string = '000000'): stri
  * Converts image URL (local asset, remote URL, or blob) to base64 Data URI
  */
 async function toDataUri(url: string): Promise<string | null> {
-  if (!url) return null;
-  if (url.startsWith('data:image/')) return url;
+  const safeUrl = resolveSafeDisplayUrl(url, '');
+  if (!safeUrl) return null;
+  if (safeUrl.startsWith('data:image/')) return safeUrl;
 
   try {
-    const response = await fetch(url);
+    const response = await fetch(safeUrl);
     if (!response.ok) return null;
     const blob = await response.blob();
     return new Promise((resolve) => {
@@ -44,7 +46,8 @@ async function toDataUri(url: string): Promise<string | null> {
  * via progressive transparency degradê into the right-side course photograph).
  */
 async function createPptxCapaBackground(coverImageUrl?: string): Promise<string | null> {
-  if (!coverImageUrl) return null;
+  const safeCoverUrl = resolveSafeDisplayUrl(coverImageUrl, '');
+  if (!safeCoverUrl) return null;
   return new Promise((resolve) => {
     try {
       const canvas = document.createElement('canvas');
@@ -108,7 +111,7 @@ async function createPptxCapaBackground(coverImageUrl?: string): Promise<string 
         resolve(canvas.toDataURL('image/png'));
       };
       img.onerror = () => resolve(null);
-      img.src = coverImageUrl;
+      img.src = safeCoverUrl;
     } catch {
       resolve(null);
     }
@@ -252,7 +255,10 @@ export async function exportToPowerPoint(book: AcademicBook): Promise<void> {
 
       // Carregar Logo Oficial e Capa Coerente do Curso com degradê integrado
       const logoDataUri = (await toDataUri(estacioLogoOfficial)) || (await toDataUri('/estacio_logo_oficial.png'));
-      const coverImageUrl = s.photos[0]?.url || book.coverImage || getCourseCoverImage(book.courseName, book.academicArea);
+      const coverImageUrl =
+        resolveSafeDisplayUrl(s.photos[0]?.url, '') ||
+        resolveSafeDisplayUrl(book.coverImage, '') ||
+        getCourseCoverImage(book.courseName, book.academicArea);
       const capaBgDataUri = await createPptxCapaBackground(coverImageUrl);
 
       // CAMADAS 1, 2 e 3: Imagem representativa integrada no lado direito via degradê com transparência progressiva

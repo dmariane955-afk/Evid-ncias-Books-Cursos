@@ -18,6 +18,7 @@ import {
 import { ActivityItem, ActivityType, Course, PhotoItem, CampusId } from '../types';
 import { generateActivityObjective } from '../utils/aiObjective';
 import { compressImageToDataUrl } from '../services/storageService';
+import { resolveSafeDisplayUrl } from '../services/mediaCache';
 
 interface NewActivityModalProps {
   isOpen: boolean;
@@ -345,7 +346,7 @@ export const NewActivityModal: React.FC<NewActivityModalProps> = ({
                     >
                       <div className="relative aspect-4/3 overflow-hidden bg-slate-100">
                         <img
-                          src={photo.url}
+                          src={resolveSafeDisplayUrl(photo.url, '')}
                           alt={photo.caption || 'Foto'}
                           className="w-full h-full object-cover"
                         />

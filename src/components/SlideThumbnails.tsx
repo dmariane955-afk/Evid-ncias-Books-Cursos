@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import { SlideData, SlideType } from '../types';
 import { computePhotoLayout } from '../utils/photoLayoutEngine';
+import { resolveSafeDisplayUrl } from '../services/mediaCache';
 
 interface SlideThumbnailsProps {
   slides: SlideData[];
@@ -171,7 +172,7 @@ export const SlideThumbnails: React.FC<SlideThumbnailsProps> = ({
                   >
                     <Copy className="w-3 h-3" />
                   </button>
-                  {slides.length > 1 && (
+                  {slides.length > 1 && !(slide.type === 'capa' && slides.filter((s) => s.type === 'capa').length <= 1) && (
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
@@ -195,10 +196,10 @@ export const SlideThumbnails: React.FC<SlideThumbnailsProps> = ({
 
                 {slide.type === 'capa' ? (
                   <>
-                    {slide.photos && slide.photos[0]?.url && (
+                    {slide.photos && resolveSafeDisplayUrl(slide.photos[0]?.url, '') && (
                       <div className="absolute top-0 bottom-0 right-0 w-3/5 overflow-hidden pointer-events-none">
                         <img
-                          src={slide.photos[0].url}
+                          src={resolveSafeDisplayUrl(slide.photos[0]?.url, '')}
                           alt="Capa"
                           className="w-full h-full object-cover opacity-85"
                           style={{
@@ -284,7 +285,7 @@ export const SlideThumbnails: React.FC<SlideThumbnailsProps> = ({
                                   className="overflow-hidden bg-slate-300 rounded-[1px]"
                                 >
                                   <img
-                                    src={ph.url}
+                                    src={resolveSafeDisplayUrl(ph.url, '')}
                                     alt=""
                                     className={`w-full h-full ${(ph.fit || frame.fit) === 'contain' ? 'object-contain' : 'object-cover'}`}
                                     style={{

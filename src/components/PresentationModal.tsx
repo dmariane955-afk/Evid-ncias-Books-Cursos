@@ -21,6 +21,7 @@ import { EstacioLogo } from './EstacioLogo';
 import { getCourseCoverImage } from '../utils/courseCovers';
 import { computePhotoLayout } from '../utils/photoLayoutEngine';
 import { getSummarySections } from '../utils/summaryStructure';
+import { resolveSafeDisplayUrl } from '../services/mediaCache';
 
 interface PresentationModalProps {
   isOpen: boolean;
@@ -123,7 +124,11 @@ export const PresentationModal: React.FC<PresentationModalProps> = ({
 
         {/* Slide contents based on type */}
         {currentSlide.type === 'capa' && (() => {
-          const capaCoverUrl = currentSlide.photos[0]?.url || book.coverImage || getCourseCoverImage(book.courseName, book.academicArea);
+          const fallbackCover = getCourseCoverImage(book.courseName, book.academicArea);
+          const capaCoverUrl =
+            resolveSafeDisplayUrl(currentSlide.photos[0]?.url, '') ||
+            resolveSafeDisplayUrl(book.coverImage, '') ||
+            fallbackCover;
           const coverPhoto = currentSlide.photos[0];
           const coverPos = coverPhoto?.position || 'center';
           const coverZoom = coverPhoto?.zoom || 1;
@@ -383,7 +388,7 @@ export const PresentationModal: React.FC<PresentationModalProps> = ({
                         >
                           <div className="relative w-full flex-1 min-h-0 overflow-hidden">
                             <img
-                              src={p.url}
+                              src={resolveSafeDisplayUrl(p.url, '')}
                               alt={p.caption || 'Foto'}
                               className={`w-full h-full ${
                                 (p.fit || frame.fit) === 'contain' ? 'object-contain' : 'object-cover'

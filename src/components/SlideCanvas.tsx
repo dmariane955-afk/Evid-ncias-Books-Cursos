@@ -46,6 +46,7 @@ import { getCourseCoverImage, COURSE_COVER_LIBRARY } from '../utils/courseCovers
 import { uploadCoverImageToStorage, compressImageToDataUrl } from '../services/storageService';
 import { computePhotoLayout, SmartCompositionPreset, normalizePreset } from '../utils/photoLayoutEngine';
 import { getSummarySections } from '../utils/summaryStructure';
+import { resolveSafeDisplayUrl } from '../services/mediaCache';
 import { Loader2 } from 'lucide-react';
 
 interface SlideCanvasProps {
@@ -700,14 +701,12 @@ export const SlideCanvas: React.FC<SlideCanvasProps> = ({
 
         {/* SLIDE 01: CAPA DO BOOK (NOVO DESIGN: AZUL COM DEGRADÊ E IMAGEM INTEGRADA) */}
         {slide.type === 'capa' && (() => {
-          const customDataUrl = [slide.photos[0]?.url, book.coverImage].find(
-            (url) => url && typeof url === 'string' && url.startsWith('data:')
-          );
-          const capaCoverUrl =
-            customDataUrl ||
-            book.coverImage ||
-            slide.photos[0]?.url ||
-            getCourseCoverImage(book.courseName, book.academicArea);
+          const fallbackCover = getCourseCoverImage(book.courseName, book.academicArea);
+          const resolvedCandidates = [slide.photos[0]?.url, book.coverImage]
+            .map((url) => resolveSafeDisplayUrl(url, ''))
+            .filter(Boolean);
+          const customDataUrl = resolvedCandidates.find((url) => url.startsWith('data:'));
+          const capaCoverUrl = customDataUrl || resolvedCandidates[0] || fallbackCover;
           const coverPhoto = slide.photos[0];
           const coverPos = coverPhoto?.position || 'center';
           const coverZoom = coverPhoto?.zoom || 1;
@@ -1469,7 +1468,7 @@ export const SlideCanvas: React.FC<SlideCanvasProps> = ({
                               }`}
                             >
                               <img
-                                src={photo.url}
+                                src={resolveSafeDisplayUrl(photo.url, '')}
                                 alt={photo.caption || 'Foto'}
                                 draggable={false}
                                 className={`w-full h-full pointer-events-none transition-transform duration-75 select-none ${

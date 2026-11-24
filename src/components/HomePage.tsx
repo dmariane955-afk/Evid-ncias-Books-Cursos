@@ -27,6 +27,7 @@ import { EstacioLogo } from './EstacioLogo';
 import { CourseCoverModal } from './CourseCoverModal';
 import { getCourseCoverImage } from '../utils/courseCovers';
 import { compressImageToDataUrl } from '../services/storageService';
+import { resolveSafeDisplayUrl } from '../services/mediaCache';
 
 interface HomePageProps {
   courses: Course[];
@@ -289,15 +290,12 @@ export const HomePage: React.FC<HomePageProps> = ({
               const AreaIcon = getAreaIcon(course.academicArea);
               const isMenuOpen = openBookMenuId === course.id;
               const capaSlidePhoto = courseBook?.slides?.find((s) => s.type === 'capa')?.photos?.[0]?.url;
-              const customDataUrl = [course.coverImage, courseBook?.coverImage, capaSlidePhoto].find(
-                (url) => url && typeof url === 'string' && url.startsWith('data:')
-              );
-              const coverUrl =
-                customDataUrl ||
-                course.coverImage ||
-                courseBook?.coverImage ||
-                capaSlidePhoto ||
-                getCourseCoverImage(course.name, course.academicArea);
+              const fallbackCover = getCourseCoverImage(course.name, course.academicArea);
+              const resolvedCandidates = [course.coverImage, courseBook?.coverImage, capaSlidePhoto]
+                .map((url) => resolveSafeDisplayUrl(url, ''))
+                .filter(Boolean);
+              const customDataUrl = resolvedCandidates.find((url) => url.startsWith('data:'));
+              const coverUrl = customDataUrl || resolvedCandidates[0] || fallbackCover;
               const areaConfig = AREA_CONFIGS[course.academicArea];
 
               return (
@@ -567,17 +565,20 @@ export const HomePage: React.FC<HomePageProps> = ({
                 >
                   {/* Image thumbnail banner */}
                   <div className="relative aspect-16/9 bg-slate-100 overflow-hidden">
-                    {mainPhoto ? (
-                      <img
-                        src={mainPhoto.url}
-                        alt={act.title}
-                        className="w-full h-full object-cover"
-                      />
-                    ) : (
-                      <div className="w-full h-full flex items-center justify-center text-slate-400 text-xs font-medium">
-                        Sem foto anexada
-                      </div>
-                    )}
+                    {(() => {
+                      const resolvedBanner = resolveSafeDisplayUrl(mainPhoto?.url, '');
+                      return resolvedBanner ? (
+                        <img
+                          src={resolvedBanner}
+                          alt={act.title}
+                          className="w-full h-full object-cover"
+                        />
+                      ) : (
+                        <div className="w-full h-full flex items-center justify-center text-slate-400 text-xs font-medium">
+                          {mainPhoto ? 'Carregando foto...' : 'Sem foto anexada'}
+                        </div>
+                      );
+                    })()}
 
                     <div className="absolute top-2 left-2">
                       <span

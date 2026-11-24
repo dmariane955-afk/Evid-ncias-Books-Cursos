@@ -185,6 +185,18 @@ export function hydrateUrl(
   return url;
 }
 
+/**
+ * Resolves a URL synchronously for safe <img src> rendering (never returns raw media:// refs).
+ */
+export function resolveSafeDisplayUrl(url: string | undefined, fallback: string = ''): string {
+  if (!url) return fallback;
+  if (url.startsWith(MEDIA_REF_PREFIX)) {
+    const mediaId = url.slice(MEDIA_REF_PREFIX.length);
+    return mediaMemoryMap.get(mediaId) || fallback;
+  }
+  return url;
+}
+
 function dehydratePhotos(photos: PhotoItem[] | undefined, collectedMedia: Map<string, string>): PhotoItem[] {
   if (!Array.isArray(photos)) return [];
   return photos.map((p) => ({

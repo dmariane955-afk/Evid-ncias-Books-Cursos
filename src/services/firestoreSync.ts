@@ -278,36 +278,56 @@ export function initFirestoreSync(
         slideMap.set(sub.id, cleanSlide);
       });
 
+      const seenIds = new Set<string>();
       let finalSlides: SlideData[] = [];
 
       if (rawBook.storageVersion === 2 && Array.isArray(rawBook.slideOrder) && rawBook.slideOrder.length > 0) {
-        const orderSet = new Set(rawBook.slideOrder);
-        // Preserve exact slide order
-        rawBook.slideOrder.forEach((sId, idx) => {
+        // Preserve exact slide order while deduplicating duplicate IDs
+        rawBook.slideOrder.forEach((sId) => {
+          if (!sId || seenIds.has(sId)) return;
           const found = slideMap.get(sId);
           if (found) {
-            finalSlides.push({ ...found, order: idx + 1 });
+            seenIds.add(sId);
+            finalSlides.push({ ...found });
           }
         });
 
-        // Include any slide present in subSlides whose timestamp is newer than book.updatedAt
-        // (protects against out-of-order snapshot arrival)
-        subSlides.forEach((sub) => {
-          if (!orderSet.has(sub.id)) {
-            const subUpdated = sub.updatedAt || '';
-            const bookUpdated = rawBook.updatedAt || '';
-            if (!bookUpdated || subUpdated > bookUpdated) {
-              const { bookId: _ignoredBookId, updatedAt: _ignoredUpdatedAt, ...cleanSlide } = sub;
-              finalSlides.push(cleanSlide);
-            }
+        // NEVER drop slides that exist in book_slides or legacySlides even if missing from rawBook.slideOrder
+        const orphanSlides: SlideData[] = [];
+        slideMap.forEach((slide, sId) => {
+          if (!seenIds.has(sId)) {
+            seenIds.add(sId);
+            orphanSlides.push({ ...slide });
           }
         });
+
+        orphanSlides.sort((a, b) => (a.order || 0) - (b.order || 0));
+        orphanSlides.forEach((orphan) => {
+          if (orphan.type === 'capa' && !finalSlides.some((s) => s.type === 'capa')) {
+            finalSlides.unshift(orphan);
+          } else if (orphan.type === 'sumario' && !finalSlides.some((s) => s.type === 'sumario')) {
+            const capaIdx = finalSlides.findIndex((s) => s.type === 'capa');
+            finalSlides.splice(capaIdx >= 0 ? capaIdx + 1 : 0, 0, orphan);
+          } else if (orphan.type === 'contatos' && !finalSlides.some((s) => s.type === 'contatos')) {
+            finalSlides.push(orphan);
+          } else {
+            const contatosIdx = finalSlides.findIndex((s) => s.type === 'contatos');
+            const insertIdx = contatosIdx >= 0 ? contatosIdx : finalSlides.length;
+            finalSlides.splice(insertIdx, 0, orphan);
+          }
+        });
+
+        finalSlides = finalSlides.map((s, idx) => ({ ...s, order: idx + 1 }));
       } else {
-        finalSlides = Array.from(slideMap.values()).sort((a, b) => (a.order || 0) - (b.order || 0));
+        finalSlides = Array.from(slideMap.values())
+          .sort((a, b) => (a.order || 0) - (b.order || 0))
+          .map((s, idx) => ({ ...s, order: idx + 1 }));
       }
 
+      const capaPhotoUrl = finalSlides.find((s) => s.type === 'capa')?.photos?.[0]?.url;
       const assembled: AcademicBook = {
         ...rawBook,
+        coverImage: rawBook.coverImage || capaPhotoUrl,
         slides: finalSlides,
       };
 
@@ -610,7 +630,12 @@ async function performSaveBook(book: AcademicBook): Promise<boolean> {
     await uploadMediaAssets(mediaItems);
 
     const updatedAt = dehydratedBook.updatedAt || new Date().toISOString();
-    const currentSlides = dehydratedBook.slides || [];
+    const seenSlideIds = new Set<string>();
+    const currentSlides = (dehydratedBook.slides || []).filter((s) => {
+      if (!s || !s.id || seenSlideIds.has(s.id)) return false;
+      seenSlideIds.add(s.id);
+      return true;
+    });
     const currentSlideDocIds = new Set<string>();
     const ops: Array<
       | { type: 'set'; docId: string; data: StoredBookSlide; signature: string }
@@ -635,10 +660,15 @@ async function performSaveBook(book: AcademicBook): Promise<boolean> {
       }
     });
 
-    // 3. Delete slides that were removed from this book
+    // 3. Delete slides that were removed from this book (never delete the capa slide doc if none replaces it unless empty)
     const previousDocIds = knownRemoteSlideDocIdsByBook.get(book.id) || new Set<string>();
+    const capaPrefixDocId = encodeSlideDocId(book.id, `slide-capa-${book.courseId}`);
+    const hasCapaInCurrent = currentSlides.some((s) => s.type === 'capa');
     previousDocIds.forEach((oldDocId) => {
       if (!currentSlideDocIds.has(oldDocId)) {
+        if (!hasCapaInCurrent && (oldDocId === capaPrefixDocId || oldDocId.includes('__slide-capa-'))) {
+          return;
+        }
         ops.push({ type: 'delete', docId: oldDocId });
       }
     });
