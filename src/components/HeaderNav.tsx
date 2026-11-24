@@ -11,7 +11,8 @@ import {
   Trash2,
   ArrowLeftRight,
   Share2,
-  Cloud
+  Cloud,
+  FileUp
 } from 'lucide-react';
 import { AcademicBook, CampusId, Course } from '../types';
 import { CAMPUS_CONFIGS } from '../data/defaults';
@@ -42,6 +43,7 @@ interface HeaderNavProps {
   syncStatus?: SyncStatus;
   syncMessage?: string;
   onShareLink?: () => void;
+  onOpenImportPdf?: () => void;
 }
 
 export const HeaderNav: React.FC<HeaderNavProps> = ({
@@ -68,6 +70,7 @@ export const HeaderNav: React.FC<HeaderNavProps> = ({
   syncStatus = 'connected',
   syncMessage,
   onShareLink,
+  onOpenImportPdf,
 }) => {
   const campusCourses = courses.filter((c) => c.campus === currentCampus);
   const otherCampusName = currentCampus === 'curitiba' ? 'FATEC' : 'Curitiba';
@@ -238,6 +241,17 @@ export const HeaderNav: React.FC<HeaderNavProps> = ({
             <span className="hidden sm:inline">Nova Atividade</span>
             <span className="sm:hidden">Atividade</span>
           </button>
+
+          {onOpenImportPdf && (
+            <button
+              onClick={onOpenImportPdf}
+              title="Importar atividades e fotos em lote a partir de um arquivo PDF"
+              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-bold text-[#004B8D] bg-sky-50 hover:bg-sky-100 border border-sky-200 rounded-lg transition-colors whitespace-nowrap"
+            >
+              <FileUp className="w-3.5 h-3.5 text-[#00A3E0]" />
+              <span className="hidden md:inline">Importar PDF</span>
+            </button>
+          )}
 
           {/* Presentation Fullscreen */}
           <button

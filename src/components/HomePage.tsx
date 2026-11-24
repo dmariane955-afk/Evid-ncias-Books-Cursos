@@ -19,7 +19,8 @@ import {
   Layers,
   ArrowLeftRight,
   ShieldCheck,
-  Image as ImageIcon
+  Image as ImageIcon,
+  FileUp
 } from 'lucide-react';
 import { Course, AcademicBook, ActivityItem, CampusId, ActivityType } from '../types';
 import { CAMPUS_CONFIGS, AREA_CONFIGS } from '../data/defaults';
@@ -47,6 +48,7 @@ interface HomePageProps {
   onDirectExportPPTX: (book: AcademicBook) => void;
   onDropImageToNewActivity: (imageUrl: string) => void;
   onUpdateCourseCover: (courseId: string, newCoverUrl: string) => void;
+  onOpenImportPdf: (courseId?: string, file?: File | null) => void;
 }
 
 export const HomePage: React.FC<HomePageProps> = ({
@@ -67,6 +69,7 @@ export const HomePage: React.FC<HomePageProps> = ({
   onDirectExportPPTX,
   onDropImageToNewActivity,
   onUpdateCourseCover,
+  onOpenImportPdf,
 }) => {
   const [selectedTypeFilter, setSelectedTypeFilter] = useState<string>('todos');
   const [selectedCourseFilter, setSelectedCourseFilter] = useState<string>('todos');
@@ -125,6 +128,10 @@ export const HomePage: React.FC<HomePageProps> = ({
     const files = e.dataTransfer.files;
     if (files && files.length > 0) {
       const file = files[0];
+      if (file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')) {
+        onOpenImportPdf(undefined, file);
+        return;
+      }
       try {
         const compressedUrl = await compressImageToDataUrl(file, 1280, 720, 0.75);
         if (compressedUrl) {
@@ -209,6 +216,15 @@ export const HomePage: React.FC<HomePageProps> = ({
           </button>
 
           <button
+            onClick={() => onOpenImportPdf()}
+            title="Importar várias atividades e fotos a partir de um PDF"
+            className="inline-flex items-center gap-1.5 px-3.5 py-2.5 text-xs font-bold text-[#004B8D] bg-sky-50 hover:bg-sky-100 border border-sky-200 rounded-xl transition-colors"
+          >
+            <FileUp className="w-4 h-4 text-[#00A3E0]" />
+            <span>Importar PDF</span>
+          </button>
+
+          <button
             onClick={onOpenNewCourse}
             className="inline-flex items-center gap-1.5 px-3.5 py-2.5 text-xs font-semibold text-slate-700 bg-white hover:bg-slate-50 border border-slate-300 rounded-xl transition-colors"
           >
@@ -238,10 +254,10 @@ export const HomePage: React.FC<HomePageProps> = ({
         </div>
         <div>
           <span className="text-sm font-bold text-slate-800 block">
-            Arraste uma foto aqui para iniciar o cadastro imediato de uma atividade
+            Arraste uma foto ou arquivo PDF aqui para cadastrar atividades imediatamente
           </span>
           <span className="text-xs text-slate-500">
-            Ou clique neste espaço para selecionar uma foto, definir data, horário e objetivo por IA.
+            Solte um PDF para importar todas as atividades e fotos em lote, ou clique neste espaço para cadastrar uma nova foto manualmente.
           </span>
         </div>
       </div>
@@ -346,6 +362,17 @@ export const HomePage: React.FC<HomePageProps> = ({
                               <div className="px-3 py-1 font-bold text-slate-400 text-[10px] uppercase border-b border-slate-100">
                                 Gerenciar: {course.name}
                               </div>
+
+                              <button
+                                onClick={() => {
+                                  setOpenBookMenuId(null);
+                                  onOpenImportPdf(course.id);
+                                }}
+                                className="w-full text-left px-3 py-2 text-[#004B8D] hover:bg-sky-50 flex items-center gap-2 transition-colors font-semibold"
+                              >
+                                <FileUp className="w-3.5 h-3.5 text-[#00A3E0]" />
+                                <span>Importar PDF para este Book</span>
+                              </button>
 
                               <button
                                 onClick={() => {

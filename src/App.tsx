@@ -8,6 +8,7 @@ import { NewSlideModal } from './components/NewSlideModal';
 import { NewCourseModal } from './components/NewCourseModal';
 import { BookSettingsModal } from './components/BookSettingsModal';
 import { PresentationModal } from './components/PresentationModal';
+import { ImportPdfModal } from './components/ImportPdfModal';
 import { 
   DeleteConfirmModal, 
   DeleteSyncedActivityModal, 
@@ -326,6 +327,9 @@ export default function App() {
   const [isNewSlideOpen, setIsNewSlideOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isPresentationOpen, setIsPresentationOpen] = useState(false);
+  const [isImportPdfOpen, setIsImportPdfOpen] = useState(false);
+  const [importPdfCourseId, setImportPdfCourseId] = useState<string | undefined>(undefined);
+  const [importPdfFile, setImportPdfFile] = useState<File | null>(null);
 
   // Confirmation & Action Modals state
   const [deleteConfirmState, setDeleteConfirmState] = useState<{
@@ -1342,6 +1346,117 @@ export default function App() {
 
     setEditingActivity(null);
     setDroppedImageForNewActivity(null);
+  };
+
+  const handleBulkImportActivities = async (importedActivities: ActivityItem[]) => {
+    if (!importedActivities || importedActivities.length === 0) return;
+
+    pushHistorySnapshot();
+
+    const safeImported: ActivityItem[] = await Promise.all(
+      importedActivities.map(async (act) => {
+        const compressedPhotos: PhotoItem[] = await Promise.all(
+          (act.photos || []).map(async (p) => {
+            if (p.url && (p.url.startsWith('data:') || p.url.startsWith('blob:')) && p.url.length > 80000) {
+              try {
+                const compressed = await compressImageToDataUrl(p.url, 1280, 720, 0.75);
+                return { ...p, url: compressed || p.url };
+              } catch {
+                return p;
+              }
+            }
+            return p;
+          })
+        );
+        return {
+          ...act,
+          photos: compressedPhotos,
+          updatedAt: new Date().toISOString(),
+        };
+      })
+    );
+
+    setActivities((prev) => {
+      const merged = [...safeImported.slice().reverse(), ...prev];
+      persistLocalCollection(STORAGE_ACTIVITIES_KEY, 'activities', merged);
+      return merged;
+    });
+
+    await Promise.all(safeImported.map((act) => saveActivityToFirestore(act)));
+
+    const syncedBookIds = new Set<string>();
+    setBooks((prevBooks) => {
+      const updatedBooks = prevBooks.map((b) => {
+        const matchingActivities = safeImported.filter((act) => {
+          const targetCourseIds = act.targetCourseIds || [];
+          return (
+            (act.bookId && b.id === act.bookId) ||
+            targetCourseIds.includes(b.courseId) ||
+            (act.courseId === b.courseId && act.campus === b.campus)
+          );
+        });
+
+        if (matchingActivities.length === 0) {
+          return b;
+        }
+
+        let newSlides = [...b.slides];
+        for (const safeActivity of matchingActivities) {
+          const existingSlideIndex = newSlides.findIndex((s) => s.activityId === safeActivity.id);
+          const updatedSlide: SlideData = {
+            id: existingSlideIndex !== -1 ? newSlides[existingSlideIndex].id : `slide-act-${b.id}-${safeActivity.id}`,
+            activityId: safeActivity.id,
+            type: 'evidencia',
+            title: safeActivity.title,
+            subtitle: `${safeActivity.activityType} · ${safeActivity.date}${safeActivity.time ? ` às ${safeActivity.time}` : ''}`,
+            activityType: safeActivity.activityType,
+            date: safeActivity.date,
+            time: safeActivity.time,
+            objective: safeActivity.objective,
+            order: existingSlideIndex !== -1 ? newSlides[existingSlideIndex].order : newSlides.length + 1,
+            photoLayout: safeActivity.photos.length > 1 ? 'auto' : 'single',
+            photos: [...safeActivity.photos],
+            evidenceMeta: {
+              category: safeActivity.activityType,
+              date: safeActivity.date,
+              time: safeActivity.time,
+              location: 'Campus Universitário',
+              discipline: '',
+              professor: b.coordinator || '',
+              studentsCount: 0,
+              actionsReport: safeActivity.objective,
+              pedagogicalImpact: safeActivity.complementaryText || '',
+            },
+            customTextBoxes: existingSlideIndex !== -1 ? newSlides[existingSlideIndex].customTextBoxes || [] : [],
+          };
+
+          if (existingSlideIndex !== -1) {
+            newSlides[existingSlideIndex] = updatedSlide;
+          } else {
+            const contatosIdx = newSlides.findIndex((s) => s.type === 'contatos');
+            const insertIndex = contatosIdx >= 1 ? contatosIdx : newSlides.length;
+            newSlides.splice(insertIndex, 0, updatedSlide);
+          }
+        }
+
+        newSlides = newSlides.map((s, idx) => ({ ...s, order: idx + 1 }));
+        const updatedB = ensureBookStructuralIntegrity(
+          { ...b, slides: newSlides, updatedAt: new Date().toISOString() },
+          getStoredDeletedIds()
+        );
+        if (!syncedBookIds.has(updatedB.id)) {
+          syncedBookIds.add(updatedB.id);
+          void saveBookToFirestore(updatedB);
+        }
+        return updatedB;
+      });
+
+      persistLocalCollection(STORAGE_BOOKS_KEY, 'books', updatedBooks);
+      return updatedBooks;
+    });
+
+    setShareToast(`${safeImported.length} atividade(s) importada(s) do PDF e salvas no Book!`);
+    setTimeout(() => setShareToast(null), 4000);
   };
 
   // 5. EXCLUSÃO REAL DE BOOKS (REQUISITO 1 & 2)
@@ -2447,6 +2562,11 @@ export default function App() {
         syncStatus={syncStatus}
         syncMessage={syncMessage}
         onShareLink={handleShareLink}
+        onOpenImportPdf={() => {
+          setImportPdfCourseId(currentCourseId);
+          setImportPdfFile(null);
+          setIsImportPdfOpen(true);
+        }}
       />
 
       {/* VIEW: HOME / DASHBOARD (100% INDIVIDUALIZADO POR POLO) */}
@@ -2482,6 +2602,11 @@ export default function App() {
             setIsActivityModalOpen(true);
           }}
           onUpdateCourseCover={handleUpdateCourseCover}
+          onOpenImportPdf={(courseId, file) => {
+            setImportPdfCourseId(courseId || currentCourseId);
+            setImportPdfFile(file || null);
+            setIsImportPdfOpen(true);
+          }}
         />
       ) : (
         /* VIEW: POWERPOINT-STYLE BOOK EDITOR */
@@ -2534,6 +2659,20 @@ export default function App() {
         isSharedMode={activityModalSharedMode}
         editingActivity={editingActivity}
         initialDroppedImage={droppedImageForNewActivity}
+      />
+
+      {/* MODAL: IMPORT PDF */}
+      <ImportPdfModal
+        isOpen={isImportPdfOpen}
+        onClose={() => {
+          setIsImportPdfOpen(false);
+          setImportPdfFile(null);
+        }}
+        courses={courses}
+        currentCampus={currentCampus}
+        initialCourseId={importPdfCourseId}
+        initialFile={importPdfFile}
+        onImportActivities={handleBulkImportActivities}
       />
 
       {/* MODAL: NEW SLIDE TEMPLATE */}
