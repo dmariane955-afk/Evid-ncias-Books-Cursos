@@ -21,6 +21,22 @@ export interface ParsedPdfActivityDraft {
   photos: PhotoItem[];
   pagePreviewUrl: string;
   rawTextSnippet: string;
+  pageNumberLabel?: string;
+}
+
+export interface PdfExtractionReport {
+  drafts: ParsedPdfActivityDraft[];
+  duplicatesRemovedCount: number;
+}
+
+function normalizeComparableText(text: string): string {
+  return (text || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 interface TextLine {
@@ -136,6 +152,7 @@ function isBoilerplateLine(line: string): boolean {
 
 function detectStructuralPage(fullText: string, pageNumber: number, imageCount: number): { isStructural: boolean; reason?: string } {
   const lower = fullText.toLowerCase();
+  const normalized = normalizeComparableText(fullText);
   if (pageNumber === 1 && (/book de evid[êe]ncias|capa oficial|coordena[çc][ãa]o de curso|per[íi]odo letivo/i.test(lower))) {
     return { isStructural: true, reason: 'Capa identificada automaticamente' };
   }
@@ -144,6 +161,12 @@ function detectStructuralPage(fullText: string, pageNumber: number, imageCount: 
   }
   if (/informa[çc][õo]es institucionais|encerramento do book|fale conosco/i.test(lower) && imageCount <= 1) {
     return { isStructural: true, reason: 'Página de contatos/encerramento' };
+  }
+  if (/^(conclus[ãa]o|considera[çc][õo]es finais|agradecimentos|obrigado)\b/i.test(normalized) || /\bconclus[ãa]o\b/i.test(lower.split('\n')[0] || '')) {
+    return { isStructural: true, reason: 'Slide de conclusão / encerramento' };
+  }
+  if (/atualiza[çc][õo]es e destaques/i.test(lower) && imageCount === 0) {
+    return { isStructural: true, reason: 'Slide divisor sem fotos' };
   }
   if (/apresenta[çc][ãa]o do curso|diretrizes curriculares|corpo docente/i.test(lower) && imageCount === 0) {
     return { isStructural: true, reason: 'Slide institucional sem fotos' };
@@ -267,10 +290,10 @@ function quickDataUrlSignature(dataUrl: string): string {
   return `${len}_${sampleA}_${sampleB}`;
 }
 
-export async function extractActivitiesFromPdf(
+export async function extractActivitiesFromPdfWithReport(
   file: File,
   onProgress?: (currentPage: number, totalPages: number) => void
-): Promise<ParsedPdfActivityDraft[]> {
+): Promise<PdfExtractionReport> {
   const buffer = await file.arrayBuffer();
   const loadingTask = pdfjsLib.getDocument({ data: new Uint8Array(buffer) });
   const pdf = await loadingTask.promise;
@@ -368,6 +391,15 @@ export async function extractActivitiesFromPdf(
   const repeatThreshold = totalPages >= 3 ? Math.max(3, Math.ceil(totalPages * 0.45)) : Infinity;
 
   const drafts: ParsedPdfActivityDraft[] = [];
+  let duplicatesRemovedCount = 0;
+
+  interface SeenPageFingerprint {
+    normTitle: string;
+    normBody: string;
+    normFullText: string;
+    photoSetSig: string;
+  }
+  const seenPages: SeenPageFingerprint[] = [];
 
   for (const rp of rawPages) {
     const uniquePhotosRaw = rp.rawImages.filter(
@@ -375,9 +407,13 @@ export async function extractActivitiesFromPdf(
     );
 
     const compressedPhotos: PhotoItem[] = [];
+    const seenCompressedSigs = new Set<string>();
     for (let pIdx = 0; pIdx < uniquePhotosRaw.length; pIdx++) {
       const compressed = await compressImageToDataUrl(uniquePhotosRaw[pIdx].dataUrl, 1280, 720, 0.78);
       if (compressed) {
+        const compSig = quickDataUrlSignature(compressed);
+        if (seenCompressedSigs.has(compSig)) continue;
+        seenCompressedSigs.add(compSig);
         compressedPhotos.push({
           id: `pdf-p-${rp.pageNumber}-${pIdx}-${Date.now()}`,
           url: compressed,
@@ -389,6 +425,11 @@ export async function extractActivitiesFromPdf(
 
     const structural = detectStructuralPage(rp.fullText, rp.pageNumber, compressedPhotos.length);
     const meaningfulLines = rp.lines.filter((l) => !isBoilerplateLine(l.text));
+
+    // Ignore completely empty pages with no text and no photos
+    if (meaningfulLines.length === 0 && compressedPhotos.length === 0) {
+      continue;
+    }
 
     // Title heuristic: largest font size line among first half of meaningful lines
     let title = '';
@@ -430,10 +471,39 @@ export async function extractActivitiesFromPdf(
       objective = await generateActivityObjective(activityType, date, time, rp.pageNumber);
     }
 
-    // Ignore completely empty pages with no text and no photos
-    if (meaningfulLines.length === 0 && compressedPhotos.length === 0) {
+    // Deduplicate identical/repeated pages in the PDF
+    const normTitle = normalizeComparableText(title);
+    const normBody = normalizeComparableText(objective).slice(0, 140);
+    const normFullText = normalizeComparableText(rp.fullText);
+    const photoSetSig = compressedPhotos
+      .map((p) => quickDataUrlSignature(p.url))
+      .sort()
+      .join('|');
+
+    const isDuplicateInPdf = seenPages.some((prev) => {
+      if (photoSetSig && prev.photoSetSig && photoSetSig === prev.photoSetSig) {
+        if (normTitle === prev.normTitle || normBody === prev.normBody) return true;
+      }
+      if (normTitle.length > 5 && normTitle === prev.normTitle && normBody === prev.normBody) {
+        return true;
+      }
+      if (normFullText.length > 30 && normFullText === prev.normFullText) {
+        return true;
+      }
+      return false;
+    });
+
+    if (isDuplicateInPdf) {
+      duplicatesRemovedCount++;
       continue;
     }
+
+    seenPages.push({
+      normTitle,
+      normBody,
+      normFullText,
+      photoSetSig,
+    });
 
     drafts.push({
       id: `draft-p${rp.pageNumber}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
@@ -453,5 +523,13 @@ export async function extractActivitiesFromPdf(
     });
   }
 
+  return { drafts, duplicatesRemovedCount };
+}
+
+export async function extractActivitiesFromPdf(
+  file: File,
+  onProgress?: (currentPage: number, totalPages: number) => void
+): Promise<ParsedPdfActivityDraft[]> {
+  const { drafts } = await extractActivitiesFromPdfWithReport(file, onProgress);
   return drafts;
 }

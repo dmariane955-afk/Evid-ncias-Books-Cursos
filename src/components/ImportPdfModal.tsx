@@ -14,14 +14,16 @@ import {
   Plus,
   RefreshCw,
 } from 'lucide-react';
-import { ActivityItem, ActivityType, CampusId, Course, PhotoItem } from '../types';
-import { extractActivitiesFromPdf, ParsedPdfActivityDraft } from '../utils/pdfImport';
+import { AcademicBook, ActivityItem, ActivityType, CampusId, Course, PhotoItem } from '../types';
+import { extractActivitiesFromPdfWithReport, ParsedPdfActivityDraft } from '../utils/pdfImport';
 import { compressImageToDataUrl } from '../services/storageService';
+import { computeMediaId, resolveSafeDisplayUrl } from '../services/mediaCache';
 
 interface ImportPdfModalProps {
   isOpen: boolean;
   onClose: () => void;
   courses: Course[];
+  books: AcademicBook[];
   currentCampus: CampusId;
   initialCourseId?: string;
   initialFile?: File | null;
@@ -32,6 +34,7 @@ export const ImportPdfModal: React.FC<ImportPdfModalProps> = ({
   isOpen,
   onClose,
   courses,
+  books,
   currentCampus,
   initialCourseId,
   initialFile = null,
@@ -45,50 +48,126 @@ export const ImportPdfModal: React.FC<ImportPdfModalProps> = ({
   const [progress, setProgress] = useState<{ current: number; total: number }>({ current: 0, total: 0 });
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [drafts, setDrafts] = useState<ParsedPdfActivityDraft[]>([]);
+  const [duplicatesRemovedCount, setDuplicatesRemovedCount] = useState<number>(0);
   const [isDraggingOver, setIsDraggingOver] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const extraPhotoInputRef = useRef<HTMLInputElement>(null);
   const activeDraftIdForPhotoRef = useRef<string | null>(null);
+  const wasOpenRef = useRef(false);
 
   const campusCourses = courses.filter((c) => c.campus === targetCampus);
 
+  const normalizeComparable = (val: string) =>
+    (val || '')
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/^(janeiro|fevereiro|marco|abril|maio|junho|julho|agosto|setembro|outubro|novembro|dezembro|anual)(\s+de)?\s+\d{4}\s*[-–:]\s*/i, '')
+      .replace(/[^a-z0-9\s]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+  const getTargetBook = (courseId: string, campus: CampusId) =>
+    books.find((b) => b.courseId === courseId && b.campus === campus) ||
+    books.find((b) => b.courseId === courseId);
+
+  const isDraftAlreadyInBook = (draft: ParsedPdfActivityDraft, book: AcademicBook | undefined): boolean => {
+    if (!book) return false;
+    const existingEvidence = (book.slides || []).filter((s) => s.type === 'evidencia');
+    if (existingEvidence.length === 0) return false;
+
+    const draftNorm = normalizeComparable(draft.title);
+    const draftPhotoIds = new Set(
+      (draft.photos || [])
+        .map((p) => {
+          const resolved = resolveSafeDisplayUrl(p.url, p.url || '');
+          return resolved.startsWith('data:') ? computeMediaId(resolved) : resolved;
+        })
+        .filter(Boolean)
+    );
+
+    return existingEvidence.some((slide) => {
+      const slideNorm = normalizeComparable(slide.title || '');
+      if (draftNorm.length >= 6 && slideNorm.length >= 6) {
+        if (draftNorm === slideNorm) return true;
+        if (draftNorm.length >= 12 && slideNorm.length >= 12 && (draftNorm.includes(slideNorm) || slideNorm.includes(draftNorm))) {
+          return true;
+        }
+      }
+      if (draftPhotoIds.size > 0 && slide.photos && slide.photos.length > 0) {
+        const slidePhotoIds = slide.photos
+          .map((p) => {
+            if (p.url?.startsWith('media://')) return p.url.slice('media://'.length);
+            const resolved = resolveSafeDisplayUrl(p.url, p.url || '');
+            return resolved.startsWith('data:') ? computeMediaId(resolved) : resolved;
+          })
+          .filter(Boolean);
+        if (slidePhotoIds.some((id) => draftPhotoIds.has(id))) {
+          return true;
+        }
+      }
+      return false;
+    });
+  };
+
   useEffect(() => {
-    if (!isOpen) return;
-    setTargetCampus(currentCampus);
-    const matchingInCampus = courses.filter((c) => c.campus === currentCampus);
-    const preferred =
-      initialCourseId && courses.some((c) => c.id === initialCourseId)
-        ? initialCourseId
-        : matchingInCampus[0]?.id || courses[0]?.id || '';
-    const preferredCourse = courses.find((c) => c.id === preferred);
-    if (preferredCourse) {
-      setTargetCampus(preferredCourse.campus);
+    if (!isOpen) {
+      wasOpenRef.current = false;
+      return;
     }
-    setTargetCourseId(preferred);
+    const justOpened = !wasOpenRef.current;
+    wasOpenRef.current = true;
+    if (!justOpened && !initialFile) return;
+
+    const matchingInCurrentCampus = courses.filter((c) => c.campus === currentCampus);
+    const explicitCourse = initialCourseId ? courses.find((c) => c.id === initialCourseId) : undefined;
+    const resolvedCampus: CampusId = explicitCourse ? explicitCourse.campus : currentCampus;
+    const resolvedCourseId =
+      explicitCourse?.id ||
+      matchingInCurrentCampus[0]?.id ||
+      courses.find((c) => c.campus === resolvedCampus)?.id ||
+      courses[0]?.id ||
+      '';
+
+    setTargetCampus(resolvedCampus);
+    setTargetCourseId(resolvedCourseId);
     setErrorMsg(null);
 
     if (initialFile) {
-      handleProcessPdfFile(initialFile);
-    } else {
+      handleProcessPdfFile(initialFile, resolvedCourseId, resolvedCampus);
+    } else if (justOpened) {
       setSelectedFile(null);
       setDrafts([]);
+      setDuplicatesRemovedCount(0);
       setProgress({ current: 0, total: 0 });
     }
-  }, [isOpen, initialCourseId, currentCampus, initialFile]);
+  }, [isOpen, initialCourseId, currentCampus, initialFile, courses]);
 
   // Keep targetCourseId valid when switching campus selector inside modal
   useEffect(() => {
     if (!isOpen) return;
     const valid = campusCourses.some((c) => c.id === targetCourseId);
     if (!valid && campusCourses.length > 0) {
-      setTargetCourseId(campusCourses[0].id);
+      const nextCourseId = campusCourses[0].id;
+      setTargetCourseId(nextCourseId);
+      const nextBook = getTargetBook(nextCourseId, targetCampus);
+      setDrafts((prev) =>
+        prev.map((d) => ({
+          ...d,
+          selected: !d.isStructuralPage && !isDraftAlreadyInBook(d, nextBook),
+        }))
+      );
     }
-  }, [targetCampus, courses, isOpen]);
+  }, [targetCampus, isOpen]);
 
   if (!isOpen) return null;
 
-  const handleProcessPdfFile = async (file: File) => {
+  const handleProcessPdfFile = async (
+    file: File,
+    overrideCourseId?: string,
+    overrideCampus?: CampusId
+  ) => {
     if (!file || (!file.name.toLowerCase().endsWith('.pdf') && file.type !== 'application/pdf')) {
       setErrorMsg('Por favor, selecione um arquivo PDF válido (.pdf).');
       return;
@@ -98,17 +177,35 @@ export const ImportPdfModal: React.FC<ImportPdfModalProps> = ({
     setErrorMsg(null);
     setIsParsing(true);
     setDrafts([]);
+    setDuplicatesRemovedCount(0);
     setProgress({ current: 0, total: 0 });
 
     try {
-      const extracted = await extractActivitiesFromPdf(file, (curr, total) => {
-        setProgress({ current: curr, total });
-      });
+      const { drafts: extracted, duplicatesRemovedCount: removedDupes } = await extractActivitiesFromPdfWithReport(
+        file,
+        (curr, total) => {
+          setProgress({ current: curr, total });
+        }
+      );
 
       if (extracted.length === 0) {
         setErrorMsg('Não foi possível identificar conteúdo ou páginas válidas neste PDF.');
       }
-      setDrafts(extracted);
+
+      const activeCourseId = overrideCourseId || targetCourseId;
+      const activeCampus = overrideCampus || targetCampus;
+      const destBook = getTargetBook(activeCourseId, activeCampus);
+
+      const enriched = extracted.map((d) => {
+        const alreadyExists = isDraftAlreadyInBook(d, destBook);
+        return {
+          ...d,
+          selected: !d.isStructuralPage && !alreadyExists,
+        };
+      });
+
+      setDuplicatesRemovedCount(removedDupes);
+      setDrafts(enriched);
     } catch (err) {
       console.error('Erro ao processar PDF:', err);
       setErrorMsg('Falha ao ler o arquivo PDF. Verifique se o arquivo não está corrompido ou protegido por senha.');
@@ -175,17 +272,21 @@ export const ImportPdfModal: React.FC<ImportPdfModalProps> = ({
 
   const selectedDrafts = drafts.filter((d) => d.selected);
   const selectedCourse = courses.find((c) => c.id === targetCourseId);
+  const targetBook = getTargetBook(targetCourseId, targetCampus);
+  const alreadyInBookCount = drafts.filter((d) => isDraftAlreadyInBook(d, targetBook)).length;
 
   const handleConfirmImport = async () => {
     if (!targetCourseId || selectedDrafts.length === 0) return;
     setIsSaving(true);
+    setErrorMsg(null);
     try {
+      const resolvedBookId = targetBook?.id || `book-${targetCourseId}`;
       const nowBase = Date.now();
       const newActivities: ActivityItem[] = selectedDrafts.map((draft, idx) => {
         const actId = `act-${nowBase + idx}-${Math.random().toString(36).substring(2, 6)}`;
         return {
           id: actId,
-          bookId: `book-${targetCourseId}`,
+          bookId: resolvedBookId,
           campus: targetCampus,
           unitId: targetCampus,
           courseId: targetCourseId,
@@ -209,7 +310,7 @@ export const ImportPdfModal: React.FC<ImportPdfModalProps> = ({
       onClose();
     } catch (err) {
       console.error('Erro ao importar atividades do PDF:', err);
-      setErrorMsg('Ocorreu um erro ao salvar as atividades importadas. Tente novamente.');
+      setErrorMsg('Ocorreu um erro ao salvar as atividades no Book. Verifique a conexão e tente novamente.');
     } finally {
       setIsSaving(false);
     }
@@ -308,7 +409,17 @@ export const ImportPdfModal: React.FC<ImportPdfModalProps> = ({
               </label>
               <select
                 value={targetCourseId}
-                onChange={(e) => setTargetCourseId(e.target.value)}
+                onChange={(e) => {
+                  const newCourseId = e.target.value;
+                  setTargetCourseId(newCourseId);
+                  const nextBook = getTargetBook(newCourseId, targetCampus);
+                  setDrafts((prev) =>
+                    prev.map((d) => ({
+                      ...d,
+                      selected: !d.isStructuralPage && !isDraftAlreadyInBook(d, nextBook),
+                    }))
+                  );
+                }}
                 className="w-full bg-white border border-slate-300 rounded-lg px-3 py-2 text-xs font-bold text-[#001D3D] focus:outline-hidden focus:ring-2 focus:ring-[#00A3E0]"
               >
                 {campusCourses.length === 0 ? (
@@ -393,7 +504,7 @@ export const ImportPdfModal: React.FC<ImportPdfModalProps> = ({
           {drafts.length > 0 && !isParsing && (
             <div className="space-y-3">
               <div className="flex flex-wrap items-center justify-between gap-2 bg-sky-50/70 border border-sky-200 rounded-xl px-3.5 py-2.5">
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                   <Sparkles className="w-4 h-4 text-[#00A3E0]" />
                   <span className="font-bold text-[#001D3D]">
                     {drafts.length} {drafts.length === 1 ? 'página identificada' : 'páginas identificadas'} em "{selectedFile?.name}"
@@ -401,15 +512,32 @@ export const ImportPdfModal: React.FC<ImportPdfModalProps> = ({
                   <span className="px-2 py-0.5 rounded-full bg-[#004B8D] text-white font-bold text-[10px]">
                     {selectedDrafts.length} selecionadas
                   </span>
+                  {duplicatesRemovedCount > 0 && (
+                    <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 font-bold text-[10px]">
+                      {duplicatesRemovedCount} {duplicatesRemovedCount === 1 ? 'duplicado removido' : 'duplicados removidos'} do PDF
+                    </span>
+                  )}
+                  {alreadyInBookCount > 0 && (
+                    <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 font-bold text-[10px]">
+                      {alreadyInBookCount} já cadastradas neste Book
+                    </span>
+                  )}
                 </div>
 
                 <div className="flex items-center gap-2">
                   <button
                     type="button"
-                    onClick={() => setDrafts((prev) => prev.map((d) => ({ ...d, selected: !d.isStructuralPage })))}
+                    onClick={() =>
+                      setDrafts((prev) =>
+                        prev.map((d) => ({
+                          ...d,
+                          selected: !d.isStructuralPage && !isDraftAlreadyInBook(d, targetBook),
+                        }))
+                      )
+                    }
                     className="text-[11px] font-semibold text-[#004B8D] hover:underline"
                   >
-                    Apenas atividades
+                    Apenas atividades inéditas
                   </button>
                   <span className="text-slate-300">|</span>
                   <button
@@ -440,7 +568,9 @@ export const ImportPdfModal: React.FC<ImportPdfModalProps> = ({
               </div>
 
               <div className="space-y-3">
-                {drafts.map((draft) => (
+                {drafts.map((draft) => {
+                  const alreadyExistsInBook = isDraftAlreadyInBook(draft, targetBook);
+                  return (
                   <div
                     key={draft.id}
                     className={`rounded-xl border p-3.5 transition-all ${
@@ -451,7 +581,7 @@ export const ImportPdfModal: React.FC<ImportPdfModalProps> = ({
                   >
                     {/* Card top toggle header */}
                     <div className="flex items-center justify-between gap-2 pb-2.5 border-b border-slate-100">
-                      <label className="flex items-center gap-2 cursor-pointer font-bold text-slate-800">
+                      <label className="flex flex-wrap items-center gap-2 cursor-pointer font-bold text-slate-800">
                         <input
                           type="checkbox"
                           checked={draft.selected}
@@ -464,6 +594,11 @@ export const ImportPdfModal: React.FC<ImportPdfModalProps> = ({
                         {draft.isStructuralPage && (
                           <span className="px-2 py-0.5 rounded bg-amber-100 text-amber-800 text-[10px] font-bold">
                             {draft.structuralReason || 'Página institucional'}
+                          </span>
+                        )}
+                        {alreadyExistsInBook && (
+                          <span className="px-2 py-0.5 rounded bg-orange-100 text-orange-800 text-[10px] font-bold">
+                            Já existe neste Book (desmarcada para evitar duplicação)
                           </span>
                         )}
                       </label>
@@ -624,7 +759,8 @@ export const ImportPdfModal: React.FC<ImportPdfModalProps> = ({
                       </div>
                     )}
                   </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           )}
